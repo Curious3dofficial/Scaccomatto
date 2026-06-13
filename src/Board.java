@@ -69,6 +69,8 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         Piece victimPiece;
         float releaseT;
         boolean shadowTopToBottom;
+        boolean cloudOnly;
+        float cloudScale = 1f;
         FireballImpactFx(int row, int col, long now, long durationMs, Piece victimPiece, boolean shadowTopToBottom) {
             this.row = row;
             this.col = col;
@@ -78,6 +80,15 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
             this.releaseT = FIREBALL_DROP_START_T;
             this.shadowTopToBottom = shadowTopToBottom;
         }
+    }
+
+    private static class BomberCaptureFx {
+        Piece rook;
+        int fromRow, fromCol;
+        int toRow, toCol;
+        long startMs;
+        boolean rushing;
+        float rushProgress;
     }
 
     private static class ShieldVisualFx {
@@ -858,6 +869,12 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     private boolean bomberConsumePending = false;
     private boolean bomberConsumeSideWhite = false;
     private static final int BOMBER_COST = 8;
+    private static final long BOMBER_CHARGE_MS = 4000L;
+    private static final long BOMBER_RUSH_MS = 170L;
+    private static final float BOMBER_ROOK_MAX_SCALE = 1.16f;
+    private BomberCaptureFx bomberCaptureFx;
+    private Timer bomberCaptureTimer;
+    private boolean completingBomberCapture = false;
     private boolean pendingEndermanPiecePick = false;
     private boolean pendingEndermanSideWhite = false;
     private boolean endermanPhaseActive = false;
@@ -1419,6 +1436,12 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     }
 
     private void resetSpellState() {
+        if (bomberCaptureTimer != null) {
+            bomberCaptureTimer.stop();
+            bomberCaptureTimer = null;
+        }
+        bomberCaptureFx = null;
+        completingBomberCapture = false;
         cancelDeferredSpellVisualEffects();
         freezeBurstFx.clear();
         freezeVisualFx.clear();
@@ -2186,6 +2209,24 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         scheduleSpellChessNukeSound(cloudDelayMs);
     }
 
+    private void startBomberCloudFx(int row, int col) {
+        if (!inBounds(row, col)) return;
+        ensureFireballSmokeSprite();
+        warmSmokeTintCache();
+        FireballImpactFx fx = new FireballImpactFx(
+                row,
+                col,
+                System.currentTimeMillis(),
+                1L,
+                null,
+                false);
+        fx.cloudOnly = true;
+        fx.cloudScale = 0.72f;
+        fireballImpactFx.add(fx);
+        ensureExplosionFxTimerRunning();
+        playSpellChessSoundAsync(SPELL_CHESS_NUKE_SOUND, 0.75f, 0);
+    }
+
     private long getExplosionDurationMs() {
         // Compensate for 60 FPS frame rate by doubling duration to maintain animation speed
         return Math.max(EXPLOSION_FRAME_MS, (long) explosionOverlayFrames.size() * EXPLOSION_FRAME_MS * 2);
@@ -2423,6 +2464,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     }
 
     private long getFireballImpactFxLifetimeMs(FireballImpactFx fx) {
+        if (fx.cloudOnly) return getFireballSmokeTotalDurationMs();
         long impactMs = Math.round(fx.durationMs * Math.max(0.05f, Math.min(FIREBALL_IMPACT_T, FIREBALL_IMPACT_T / Math.max(0.01f, FIREBALL_NUKE_TRAVEL_BOOST))));
         long shadowDurationMs = Math.max(
             1L,
@@ -2594,6 +2636,29 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
 
         for (FireballImpactFx fx : fireballImpactFx) {
             long elapsedMs = now - fx.startMs;
+            if (fx.cloudOnly) {
+                int dc = boardFlipped ? (7 - fx.col) : fx.col;
+                int dr = boardFlipped ? (7 - fx.row) : fx.row;
+                int cx = boardOriginX + dc * SQUARE_SIZE + SQUARE_SIZE / 2;
+                int cy = boardOriginY + dr * SQUARE_SIZE + SQUARE_SIZE / 2;
+                int span = SQUARE_SIZE * 3;
+                Shape oldClip = ge.getClip();
+                ge.clipRect(cx - span / 2, cy - span / 2, span, span);
+                Graphics2D gc = (Graphics2D) ge.create();
+                gc.translate(cx, cy);
+                gc.scale(fx.cloudScale, fx.cloudScale);
+                gc.translate(-cx, -cy);
+                drawFireballSmokePlume(
+                        gc,
+                        fx,
+                        boardOriginX,
+                        boardOriginY,
+                        0L,
+                        Math.max(0L, elapsedMs));
+                gc.dispose();
+                ge.setClip(oldClip);
+                continue;
+            }
             float t = (float) (elapsedMs / (double) Math.max(1L, fx.durationMs));
             int dc = boardFlipped ? (7 - fx.col) : fx.col;
             int dr = boardFlipped ? (7 - fx.row) : fx.row;
@@ -5043,9 +5108,9 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     private void drawEndermanThreeBurstPoof(
             Graphics2D g, BufferedImage sprite, float cx, float cy, float t) {
         float elapsedMs = t * ENDERMAN_PHASE_POOF_MS;
-        float pieceAlpha = elapsedMs < 1700f
+        float pieceAlpha = elapsedMs < 850f
                 ? 1f
-                : 1f - smoothStep((elapsedMs - 1700f) / 1000f) * 0.70f;
+                : 1f - smoothStep(Math.min(1f, (elapsedMs - 850f) / 650f)) * 0.70f;
         drawEndermanSprite(g, sprite, cx, cy, 1f, pieceAlpha);
 
         if (elapsedMs >= 600f && elapsedMs < 1100f) {
@@ -5090,9 +5155,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                     g, cx, cy, SQUARE_SIZE * (0.78f + t * 0.08f), shellFade);
         }
 
-        float fade = t < 0.50f
-                ? 1f
-                : 1f - smoothStep((t - 0.50f) / 0.50f);
+        float dissolveT = Math.max(0f, Math.min(1f, (t - 0.42f) / 0.58f));
         int arcCount = 5;
 
         for (int arc = 0; arc < arcCount; arc++) {
@@ -5109,7 +5172,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                     g, fragmentCx, fragmentCy,
                     direction + Math.PI / 2.0,
                     width, height,
-                    fade,
+                    dissolveT,
                     arc);
         }
 
@@ -5119,8 +5182,9 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
             float progress = easeOutCubic(Math.min(1f, t * speed / 0.70f));
             float distance = SQUARE_SIZE * (0.34f + i * 0.065f) * progress;
             float radius = SQUARE_SIZE * (0.055f + (i % 3) * 0.012f);
-            float residualAlpha = fade
-                    * (1f - smoothStep(Math.max(0f, (t - 0.34f) / 0.66f)));
+            float residualDissolve = Math.max(0f, Math.min(1f,
+                    (dissolveT - i * 0.07f) / 0.72f));
+            float residualAlpha = 1f - smoothStep(residualDissolve);
             drawEndermanResidualBlob(
                     g,
                     cx + (float) Math.cos(direction) * distance,
@@ -5142,10 +5206,10 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         java.awt.geom.Area underside = new java.awt.geom.Area(shell);
         underside.transform(java.awt.geom.AffineTransform.getTranslateInstance(
                 0, diameter * 0.075f));
-        g.setColor(new Color(201, 105, 157, 220));
+        g.setColor(new Color(79, 24, 139, 225));
         g.fill(underside);
 
-        g.setColor(new Color(241, 167, 207, 245));
+        g.setColor(new Color(151, 66, 224, 245));
         g.fill(shell);
 
         Shape oldClip = g.getClip();
@@ -5157,9 +5221,9 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 cy + diameter * 0.32f,
                 new float[]{0f, 0.48f, 1f},
                 new Color[]{
-                    new Color(255, 213, 235, 195),
-                    new Color(247, 181, 216, 80),
-                    new Color(200, 104, 158, 105)
+                    new Color(225, 186, 255, 205),
+                    new Color(175, 94, 239, 95),
+                    new Color(82, 25, 145, 125)
                 }));
         g.fillRect(
                 Math.round(cx - diameter),
@@ -5198,8 +5262,8 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
 
     private void drawEndermanCloudFragment(
             Graphics2D source, float cx, float cy, double rotation,
-            float width, float height, float alpha, int variant) {
-        if (alpha <= 0f) return;
+            float width, float height, float dissolveT, int variant) {
+        if (dissolveT >= 1f) return;
         java.awt.geom.Path2D.Float path = new java.awt.geom.Path2D.Float();
         path.moveTo(-width * 0.52f, height * 0.02f);
         path.curveTo(
@@ -5224,16 +5288,49 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.translate(cx, cy);
         g.rotate(rotation + (variant % 2 == 0 ? -0.08 : 0.08));
-        g.setComposite(AlphaComposite.getInstance(
-                AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
 
+        int rows = 3;
+        int columns = 4;
+        float chunkWidth = width * 1.16f / columns;
+        float chunkHeight = height * 1.08f / rows;
+        for (int row = 0; row < rows; row++) {
+            for (int column = 0; column < columns; column++) {
+                float inwardOrder = (rows - 1 - row) / (float) (rows - 1);
+                float jitter = ((column * 3 + row * 5 + variant * 7) % 5) * 0.025f;
+                float chunkStart = inwardOrder * 0.48f + jitter;
+                float chunkAlpha = 1f - smoothStep(
+                        Math.max(0f, Math.min(1f, (dissolveT - chunkStart) / 0.34f)));
+                if (chunkAlpha <= 0f) continue;
+
+                float x = -width * 0.58f + column * chunkWidth;
+                float y = -height * 0.54f + row * chunkHeight;
+                float overlap = Math.max(1.5f, Math.min(width, height) * 0.025f);
+                Graphics2D chunk = (Graphics2D) g.create();
+                chunk.clip(new RoundRectangle2D.Float(
+                        x - overlap,
+                        y - overlap,
+                        chunkWidth + overlap * 2f,
+                        chunkHeight + overlap * 2f,
+                        chunkHeight * 0.55f,
+                        chunkHeight * 0.55f));
+                chunk.setComposite(AlphaComposite.getInstance(
+                        AlphaComposite.SRC_OVER, chunkAlpha));
+                drawEndermanCloudFragmentShape(chunk, path, width, height);
+                chunk.dispose();
+            }
+        }
+        g.dispose();
+    }
+
+    private void drawEndermanCloudFragmentShape(
+            Graphics2D g, Shape path, float width, float height) {
         java.awt.geom.AffineTransform oldTransform = g.getTransform();
         g.translate(0, height * 0.09f);
-        g.setColor(new Color(192, 91, 145, 220));
+        g.setColor(new Color(72, 20, 132, 225));
         g.fill(path);
         g.setTransform(oldTransform);
 
-        g.setColor(new Color(241, 163, 205, 245));
+        g.setColor(new Color(145, 57, 218, 245));
         g.fill(path);
         Shape oldClip = g.getClip();
         g.clip(path);
@@ -5242,9 +5339,9 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 0f, height * 0.28f,
                 new float[]{0f, 0.55f, 1f},
                 new Color[]{
-                    new Color(255, 217, 237, 200),
-                    new Color(246, 177, 214, 70),
-                    new Color(193, 91, 146, 95)
+                    new Color(226, 190, 255, 205),
+                    new Color(172, 88, 235, 85),
+                    new Color(76, 22, 137, 115)
                 }));
         g.fillRect(
                 Math.round(-width),
@@ -5252,7 +5349,6 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 Math.round(width * 2f),
                 Math.round(height * 2f));
         g.setClip(oldClip);
-        g.dispose();
     }
 
     private void drawEndermanResidualBlob(
@@ -5262,13 +5358,13 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setComposite(AlphaComposite.getInstance(
                 AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
-        g.setColor(new Color(196, 96, 150, 210));
+        g.setColor(new Color(72, 20, 132, 215));
         g.fillOval(
                 Math.round(cx - radius),
                 Math.round(cy - radius * 0.72f),
                 Math.round(radius * 2f),
                 Math.round(radius * 2f));
-        g.setColor(new Color(251, 189, 222, 240));
+        g.setColor(new Color(178, 91, 240, 240));
         g.fillOval(
                 Math.round(cx - radius),
                 Math.round(cy - radius),
@@ -5305,7 +5401,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 float movingStartRadius = outerStartRadius * (1f - contraction);
                 float lineLength = fullLength * (1f - contraction * 0.80f);
                 float lineWidth = SQUARE_SIZE
-                        * (0.045f + (i % 2) * 0.009f)
+                        * (0.060f + (i % 2) * 0.011f)
                         * (layer == 0 ? 1f : 0.86f);
 
                 lines.setComposite(AlphaComposite.getInstance(
@@ -5321,7 +5417,38 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 Graphics2D ray = (Graphics2D) lines.create();
                 ray.translate(cx, cy);
                 ray.rotate(angle);
-                ray.fillRoundRect(
+                int stickX = Math.round(movingStartRadius);
+                int stickY = Math.round(-lineWidth / 2f);
+                int stickWidth = Math.max(1, Math.round(lineLength));
+                int stickHeight = Math.max(2, Math.round(lineWidth));
+                int stickArc = Math.round(lineWidth * 0.35f);
+                Shape stick = new RoundRectangle2D.Float(
+                        stickX, stickY, stickWidth, stickHeight, stickArc, stickArc);
+                ray.fill(stick);
+
+                Shape oldClip = ray.getClip();
+                ray.clip(stick);
+                ray.setComposite(AlphaComposite.getInstance(
+                        AlphaComposite.SRC_OVER, Math.min(0.72f, alpha * 0.72f)));
+                ray.setColor(layer == 0
+                        ? new Color(228, 176, 255)
+                        : new Color(195, 135, 245));
+                float puffRadius = Math.max(2f, lineWidth * 0.54f);
+                for (int puff = 0; puff < 5; puff++) {
+                    float puffX = movingStartRadius
+                            + lineLength * (0.12f + puff * 0.19f);
+                    float puffY = ((puff + i + layer) % 3 - 1) * lineWidth * 0.16f;
+                    ray.fillOval(
+                            Math.round(puffX - puffRadius),
+                            Math.round(puffY - puffRadius),
+                            Math.round(puffRadius * 2f),
+                            Math.round(puffRadius * 2f));
+                }
+                ray.setClip(oldClip);
+                ray.setComposite(AlphaComposite.getInstance(
+                        AlphaComposite.SRC_OVER, Math.min(0.55f, alpha * 0.55f)));
+                ray.setColor(new Color(91, 27, 151));
+                ray.drawRoundRect(
                         Math.round(movingStartRadius),
                         Math.round(-lineWidth / 2f),
                         Math.max(1, Math.round(lineLength)),
@@ -7568,6 +7695,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                     board[r][c] != animPiece && 
                     board[r][c] != animRook && !(r == vibrateRow && c == vibrateCol) && 
                     (!dragging || board[r][c] != draggedPiece) &&
+                    !isBomberCaptureSourcePiece(board[r][c], r, c) &&
                     !isPieceInActivePreExplosionAt(r, c, board[r][c]) &&
                     !isPieceHandledByEndermanPop(board[r][c], r, c, fogFrameTimeMs) &&
                     !isPieceHandledByEndermanPhasePoof(board[r][c], r, c) &&
@@ -7600,6 +7728,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
             }
         }
 
+        drawBomberCaptureFx((Graphics2D) g);
         drawPendingFireballVictims((Graphics2D) g);
 
         if (isDuckChessMode() && duckRow >= 0 && duckCol >= 0) {
@@ -8598,6 +8727,11 @@ g2.dispose();
     // â”€â”€â”€ instant (drag-drop) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private void executeInstant(int fromRow, int fromCol, int toRow, int toCol) {
         Piece movingPiece = board[fromRow][fromCol];
+        if (!completingBomberCapture
+                && shouldAnimateBomberCapture(movingPiece, toRow, toCol)) {
+            startBomberCaptureAnimation(movingPiece, fromRow, fromCol, toRow, toCol);
+            return;
+        }
         SpellSnapshot spellSnapshot = isSpellChessMode() ? createSpellSnapshot() : null;
 
         Piece[][] boardBeforeMove = new Piece[8][8];
@@ -8669,6 +8803,11 @@ g2.dispose();
     // â”€â”€â”€ animated (click-click) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private void executeAnimated(int fromRow, int fromCol, int toRow, int toCol) {
         Piece movingPiece = board[fromRow][fromCol];
+        if (!completingBomberCapture
+                && shouldAnimateBomberCapture(movingPiece, toRow, toCol)) {
+            startBomberCaptureAnimation(movingPiece, fromRow, fromCol, toRow, toCol);
+            return;
+        }
         SpellSnapshot spellSnapshot = isSpellChessMode() ? createSpellSnapshot() : null;
 
         Piece[][] boardBeforeMove = new Piece[8][8];
@@ -8755,6 +8894,129 @@ g2.dispose();
 
     // â”€â”€â”€ shared helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    private boolean shouldAnimateBomberCapture(Piece movingPiece, int toRow, int toCol) {
+        if (!isSpellChessMode() || !(movingPiece instanceof Rook)) return false;
+        if (movingPiece.getBombRookTurnsRemaining() <= 0) return false;
+        Piece target = inBounds(toRow, toCol) ? board[toRow][toCol] : null;
+        return target != null && target.isWhite() != movingPiece.isWhite()
+                && !(target instanceof King) && target.getShieldedTurnsRemaining() <= 0;
+    }
+
+    private void startBomberCaptureAnimation(
+            Piece rook,
+            int fromRow,
+            int fromCol,
+            int toRow,
+            int toCol) {
+        if (bomberCaptureTimer != null) bomberCaptureTimer.stop();
+        BomberCaptureFx fx = new BomberCaptureFx();
+        fx.rook = rook;
+        fx.fromRow = fromRow;
+        fx.fromCol = fromCol;
+        fx.toRow = toRow;
+        fx.toCol = toCol;
+        fx.startMs = System.currentTimeMillis();
+        bomberCaptureFx = fx;
+        animating = true;
+
+        bomberCaptureTimer = new Timer(16, e -> {
+            long elapsed = System.currentTimeMillis() - fx.startMs;
+            if (elapsed < BOMBER_CHARGE_MS) {
+                repaint();
+                return;
+            }
+            fx.rushing = true;
+            fx.rushProgress = Math.min(1f,
+                    (elapsed - BOMBER_CHARGE_MS) / (float) BOMBER_RUSH_MS);
+            repaint();
+            if (fx.rushProgress < 1f) return;
+
+            ((Timer) e.getSource()).stop();
+            bomberCaptureTimer = null;
+            completingBomberCapture = true;
+            bomberCaptureFx = null;
+            animating = false;
+            executeInstant(fromRow, fromCol, toRow, toCol);
+            completingBomberCapture = false;
+        });
+        bomberCaptureTimer.setCoalesce(true);
+        bomberCaptureTimer.start();
+        repaint();
+    }
+
+    private boolean isBomberCaptureSourcePiece(Piece piece, int row, int col) {
+        BomberCaptureFx fx = bomberCaptureFx;
+        return fx != null && fx.rook == piece && fx.fromRow == row && fx.fromCol == col;
+    }
+
+    private void drawBomberCaptureFx(Graphics2D source) {
+        BomberCaptureFx fx = bomberCaptureFx;
+        if (fx == null || fx.rook == null) return;
+
+        long elapsed = System.currentTimeMillis() - fx.startMs;
+        float chargeT = Math.max(0f, Math.min(1f, elapsed / (float) BOMBER_CHARGE_MS));
+        float glowT = chargeT * chargeT * (3f - 2f * chargeT);
+        float moveT = fx.rushing ? fx.rushProgress : 0f;
+
+        int sourceRow = boardFlipped ? 7 - fx.fromRow : fx.fromRow;
+        int sourceCol = boardFlipped ? 7 - fx.fromCol : fx.fromCol;
+        int targetRow = boardFlipped ? 7 - fx.toRow : fx.toRow;
+        int targetCol = boardFlipped ? 7 - fx.toCol : fx.toCol;
+        float x = (sourceCol + (targetCol - sourceCol) * moveT) * SQUARE_SIZE;
+        float y = (sourceRow + (targetRow - sourceRow) * moveT) * SQUARE_SIZE;
+
+        Graphics2D g = (Graphics2D) source.create();
+        g.setComposite(AlphaComposite.SrcOver);
+        g.setColor(new Color(0, 0, 0, Math.round(168f * glowT)));
+        g.fillRect(0, 0, SQUARE_SIZE * 8, SQUARE_SIZE * 8);
+
+        BufferedImage rookImage = new BufferedImage(
+                SQUARE_SIZE, SQUARE_SIZE, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D pieceGraphics = rookImage.createGraphics();
+        fx.rook.draw(pieceGraphics, 0, 0);
+        pieceGraphics.dispose();
+
+        RescaleOp whiteTint = new RescaleOp(
+                new float[]{0f, 0f, 0f, 1f},
+                new float[]{255f, 255f, 255f, 0f},
+                null);
+        float scale = 1f + (BOMBER_ROOK_MAX_SCALE - 1f) * glowT;
+        int drawSize = Math.max(1, Math.round(SQUARE_SIZE * scale));
+        int drawX = Math.round(x + (SQUARE_SIZE - drawSize) / 2f);
+        int drawY = Math.round(y + (SQUARE_SIZE - drawSize) / 2f);
+
+        if (glowT > 0.02f) {
+            int halo = Math.max(4, Math.round(SQUARE_SIZE * (0.10f + 0.12f * glowT)));
+            g.setColor(new Color(255, 255, 255, Math.round(105f * glowT)));
+            g.fillOval(drawX - halo, drawY - halo, drawSize + halo * 2, drawSize + halo * 2);
+        }
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        Graphics2D whiteRook = (Graphics2D) g.create();
+        whiteRook.translate(x + SQUARE_SIZE / 2f, y + SQUARE_SIZE / 2f);
+        whiteRook.scale(scale, scale);
+        whiteRook.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, glowT));
+        whiteRook.drawImage(
+                rookImage,
+                whiteTint,
+                -SQUARE_SIZE / 2,
+                -SQUARE_SIZE / 2);
+        whiteRook.dispose();
+        if (glowT < 1f) {
+            Graphics2D normalRook = (Graphics2D) g.create();
+            normalRook.translate(x + SQUARE_SIZE / 2f, y + SQUARE_SIZE / 2f);
+            normalRook.scale(scale, scale);
+            normalRook.setComposite(AlphaComposite.getInstance(
+                    AlphaComposite.SRC_OVER, 1f - glowT));
+            normalRook.drawImage(
+                    rookImage,
+                    -SQUARE_SIZE / 2,
+                    -SQUARE_SIZE / 2,
+                    null);
+            normalRook.dispose();
+        }
+        g.dispose();
+    }
+
     private void maybeBreakShieldOnMove(Piece movingPiece) {
         if (!isSpellChessMode()) return;
         if (!spellShieldBreaksOnMove) return;
@@ -8783,7 +9045,9 @@ g2.dispose();
                 board[r][c] = null;
             }
         }
-        return !isKingInCheckFor(movingPiece.isWhite());
+        boolean valid = !isKingInCheckFor(movingPiece.isWhite());
+        if (valid) startBomberCloudFx(captureRow, captureCol);
+        return valid;
     }
 
     private boolean applyAtomicExplosionIfNeeded(Piece movingPiece, Piece capturedPiece, int captureRow, int captureCol) {

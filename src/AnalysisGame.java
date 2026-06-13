@@ -5,6 +5,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class AnalysisGame extends JFrame {
+    private final MainMenu appHost;
+
+    private Frame dialogOwner() {
+        return appHost != null ? appHost : this;
+    }
 
     private Board              board;
     private MoveHistoryPanel   moveHistoryPanel;
@@ -37,6 +42,11 @@ public class AnalysisGame extends JFrame {
     private boolean            showLegalMoves     = true;
 
     public AnalysisGame() {
+        this(null);
+    }
+
+    public AnalysisGame(MainMenu appHost) {
+        this.appHost = appHost;
         setTitle("Java Chess - Analysis Board");
         setSize(1400, 800);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -47,7 +57,7 @@ public class AnalysisGame extends JFrame {
         try {
             stockfishEngine = new StockfishEngine();
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this,
+            JOptionPane.showMessageDialog(dialogOwner(),
                 "Failed to start Stockfish\n" + e.getMessage(),
                 "Engine Error",
                 JOptionPane.ERROR_MESSAGE);
@@ -66,7 +76,9 @@ public class AnalysisGame extends JFrame {
         });
 
         initializeGame();
-        setVisible(true);
+        if (appHost == null) {
+            setVisible(true);
+        }
 
         // start the persistent worker, then request initial analysis
         startWorker();
@@ -290,8 +302,12 @@ public class AnalysisGame extends JFrame {
         backBtn.setBackground(new Color(74, 55, 108));
         backBtn.addActionListener(e -> {
             shutdown();
-            dispose();
-            SwingUtilities.invokeLater(() -> new MainMenu());
+            if (appHost != null) {
+                appHost.returnToMenuFromEmbeddedScreen();
+            } else {
+                dispose();
+                SwingUtilities.invokeLater(() -> new MainMenu());
+            }
         });
         controlPanel.add(backBtn);
 
@@ -383,7 +399,11 @@ public class AnalysisGame extends JFrame {
 
         mainPanel.add(leftPanel, BorderLayout.WEST);
         mainPanel.add(historyContainer, BorderLayout.CENTER);
-        add(mainPanel);
+        if (appHost != null) {
+            appHost.showEmbeddedScreen(mainPanel, this::shutdown);
+        } else {
+            add(mainPanel);
+        }
     }
 
     private void styleButton(JButton btn) {
@@ -417,7 +437,7 @@ public class AnalysisGame extends JFrame {
     private void loadPGN() {
         String pgnInput = pgnTextField.getText().trim();
         if (pgnInput.isEmpty()) {
-            JOptionPane.showMessageDialog(this,
+            JOptionPane.showMessageDialog(dialogOwner(),
                 "Please enter PGN moves",
                 "Empty Input",
                 JOptionPane.WARNING_MESSAGE);
@@ -445,7 +465,7 @@ public class AnalysisGame extends JFrame {
                     boolean moveApplied = board.applyMoveFromNotation(cleanMove);
                     if (!moveApplied) {
                         success = false;
-                        JOptionPane.showMessageDialog(this,
+                        JOptionPane.showMessageDialog(dialogOwner(),
                             "Invalid move: " + move + "\nPosition loaded up to this point.",
                             "PGN Error",
                             JOptionPane.ERROR_MESSAGE);
@@ -455,7 +475,7 @@ public class AnalysisGame extends JFrame {
             }
             
             if (success) {
-                JOptionPane.showMessageDialog(this,
+                JOptionPane.showMessageDialog(dialogOwner(),
                     "PGN loaded successfully!",
                     "Success",
                     JOptionPane.INFORMATION_MESSAGE);
@@ -464,7 +484,7 @@ public class AnalysisGame extends JFrame {
             requestAnalysis();
             
         } catch (Exception e) {
-            JOptionPane.showMessageDialog(this,
+            JOptionPane.showMessageDialog(dialogOwner(),
                 "Error loading PGN: " + e.getMessage(),
                 "PGN Error",
                 JOptionPane.ERROR_MESSAGE);
@@ -658,13 +678,13 @@ public class AnalysisGame extends JFrame {
         List<String> moves = board.getUciMoveHistoryFromStates();
         int count = Math.min(fens.size(), moves.size());
         if (count <= 0) {
-            JOptionPane.showMessageDialog(this, "Play some moves first, then run Review.", "Review", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(dialogOwner(), "Play some moves first, then run Review.", "Review", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         List<String> reviewFens = new ArrayList<>(fens.subList(0, count));
         List<String> reviewMoves = new ArrayList<>(moves.subList(0, count));
 
-        final JDialog progress = new JDialog(this, "Review", false);
+        final JDialog progress = new JDialog(dialogOwner(), "Review", false);
         progress.setLayout(new BorderLayout());
         progress.add(new JLabel("Running game review...", SwingConstants.CENTER), BorderLayout.CENTER);
         JProgressBar bar = new JProgressBar();

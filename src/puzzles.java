@@ -18,8 +18,14 @@ public class puzzles extends JFrame {
     private static final int UNLOCKED_LEVEL = 16;
     private static final int COMPLETED_LEVEL = 10;
     private volatile boolean mapInteracted;
+    private final MainMenu appHost;
 
     public puzzles() {
+        this(null);
+    }
+
+    public puzzles(MainMenu appHost) {
+        this.appHost = appHost;
         setTitle("Scaccomatto - Puzzles");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
@@ -48,9 +54,20 @@ public class puzzles extends JFrame {
         installWheelScroll(scroller, canvas);
         scrollToBottomOnOpen(scroller, canvas);
         root.add(scroller, BorderLayout.CENTER);
-        add(root, BorderLayout.CENTER);
 
-        setVisible(true);
+        if (appHost != null) {
+            JButton back = createDarkButton("Back to Menu");
+            back.setPreferredSize(new Dimension(190, 48));
+            back.addActionListener(e -> appHost.returnToMenuFromEmbeddedScreen());
+            JPanel backBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 18, 10));
+            backBar.setOpaque(false);
+            backBar.add(back);
+            root.add(backBar, BorderLayout.NORTH);
+            appHost.showEmbeddedScreen(root, null);
+        } else {
+            add(root, BorderLayout.CENTER);
+            setVisible(true);
+        }
     }
 
     private JButton createGreenButton(String text) {

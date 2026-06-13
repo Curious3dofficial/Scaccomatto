@@ -16,6 +16,12 @@ import java.util.List;
 import java.util.Map;
 
 public class ChessGame extends JFrame {
+        private MainMenu appHost;
+        private JComponent embeddedHotkeyTarget;
+
+        private Frame dialogOwner() {
+            return appHost != null ? appHost : this;
+        }
         private static final int BASE_GAME_WIDTH = 1500;
         private static final int BASE_GAME_HEIGHT = 800;
         private static final int BASE_LEFT_WIDTH = 664;
@@ -37,6 +43,7 @@ public class ChessGame extends JFrame {
             TIME_SELECT_HEIGHT + 14 + TIME_START_HEIGHT + 12;
         private static final int TIME_PRESET_WIDTH = 156;
         private static final int TIME_PRESET_HEIGHT = 79;
+        private static final int TIME_DETAILS_ANIMATION_MS = 150;
         
         private JLabel topClockLabel;
         private JLabel bottomClockLabel;
@@ -148,6 +155,12 @@ public class ChessGame extends JFrame {
     private static final int SPELL_CARD_Y = 2;
     private static final int SPELL_NEXT_W = 72;
     private static final int SPELL_NEXT_H = 108;
+    private static final int SPELL_PANEL_W = 500;
+    private static final int SPELL_PANEL_H = 250;
+    private static final int SPELL_CARDS_W = 474;
+    private static final int SPELL_CARDS_H = 146;
+    private static final int SPELL_BAR_W = 460;
+    private static final int SPELL_BAR_H = 56;
     private boolean spellCardTransitionAnimating = false;
     private boolean spellResolutionLocked = false;
     private boolean spellResolutionWaitsForFireballTimer = false;
@@ -268,11 +281,7 @@ public class ChessGame extends JFrame {
             JOptionPane.INFORMATION_MESSAGE
         );
 
-        // Close ONLY the game window
-        dispose();
-
-        // Open main menu again
-        SwingUtilities.invokeLater(() -> new MainMenu());
+        returnToApplicationMenu();
     }
 
     private void handleTimeout(boolean whiteFlagged) {
@@ -286,7 +295,7 @@ public class ChessGame extends JFrame {
     }
 
     private void showGamePopup(String title, String message) {
-        JDialog dialog = new JDialog(this, title, true);
+        JDialog dialog = new JDialog(dialogOwner(), title, true);
         dialog.setUndecorated(true);
         dialog.setBackground(new Color(0, 0, 0, 0));
 
@@ -390,7 +399,7 @@ public class ChessGame extends JFrame {
     }
 
     private void showResultStyledPopup(String badgeText, String popupTitle, String message) {
-        JDialog dialog = new JDialog(this, popupTitle, true);
+        JDialog dialog = new JDialog(dialogOwner(), popupTitle, true);
         dialog.setUndecorated(true);
         dialog.setBackground(new Color(0, 0, 0, 0));
 
@@ -522,7 +531,7 @@ public class ChessGame extends JFrame {
     private boolean showGameConfirm(String title, String message, String yesText, String noText) {
         final boolean[] accepted = {false};
 
-        JDialog dialog = new JDialog(this, title, true);
+        JDialog dialog = new JDialog(dialogOwner(), title, true);
         dialog.setUndecorated(true);
         dialog.setBackground(new Color(0, 0, 0, 0));
 
@@ -663,11 +672,35 @@ public class ChessGame extends JFrame {
             this(initialTime, increment, bot, false);
         }
 
+        public ChessGame(MainMenu host, int initialTime, int increment, ChessBot bot) {
+            this(host, initialTime, increment, bot, bot, false);
+        }
+
+        public ChessGame(
+                MainMenu host,
+                int initialTime,
+                int increment,
+                ChessBot whiteBot,
+                ChessBot blackBot,
+                boolean spectate) {
+            this.appHost = host;
+            initializeBotGame(initialTime, increment, whiteBot, blackBot, spectate);
+        }
+
         public ChessGame(int initialTime, int increment, ChessBot bot, boolean spectate) {
             this(initialTime, increment, bot, bot, spectate);
         }
 
         public ChessGame(int initialTime, int increment, ChessBot whiteBot, ChessBot blackBot, boolean spectate) {
+            initializeBotGame(initialTime, increment, whiteBot, blackBot, spectate);
+        }
+
+        private void initializeBotGame(
+                int initialTime,
+                int increment,
+                ChessBot whiteBot,
+                ChessBot blackBot,
+                boolean spectate) {
             this.whiteTimeRemaining = initialTime;
             this.blackTimeRemaining = initialTime;
             this.incrementSeconds = increment;
@@ -690,7 +723,7 @@ public class ChessGame extends JFrame {
                 stockfishEngine = new StockfishEngine();
                 stockfishEngine.setSkillLevel(botSkillLevel);
             } catch (Exception e) {
-                JOptionPane.showMessageDialog(this,
+                JOptionPane.showMessageDialog(dialogOwner(),
                     "Failed to start Stockfish\n" + e.getMessage(),
                     "Engine Error",
                     JOptionPane.ERROR_MESSAGE
@@ -706,6 +739,11 @@ public class ChessGame extends JFrame {
         }
 
         public ChessGame(int initialTime, int increment, String variant) {
+            this(null, initialTime, increment, variant);
+        }
+
+        public ChessGame(MainMenu host, int initialTime, int increment, String variant) {
+            this.appHost = host;
             this.whiteTimeRemaining = initialTime;
             this.blackTimeRemaining = initialTime;
             this.incrementSeconds = increment;
@@ -720,6 +758,17 @@ public class ChessGame extends JFrame {
         }
 
         public ChessGame(int initialTime, int increment, NetworkManager net, boolean localIsWhite, String variant) {
+            this(null, initialTime, increment, net, localIsWhite, variant);
+        }
+
+        public ChessGame(
+                MainMenu host,
+                int initialTime,
+                int increment,
+                NetworkManager net,
+                boolean localIsWhite,
+                String variant) {
+            this.appHost = host;
             this.whiteTimeRemaining = initialTime;
             this.blackTimeRemaining = initialTime;
             this.incrementSeconds = increment;
@@ -791,7 +840,6 @@ public class ChessGame extends JFrame {
         }
         
         private void initializeGame() {
-            
             setTitle("Java Chess - Game");
             setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
             setResizable(true);
@@ -812,7 +860,7 @@ public class ChessGame extends JFrame {
             JPanel mainPanel = new JPanel();
             mainPanel.setLayout(new BorderLayout());
             mainPanel.setBackground(new Color(64, 64, 64));
-            mainPanel.setPreferredSize(new Dimension(BASE_GAME_WIDTH, BASE_GAME_HEIGHT));
+            mainPanel.setPreferredSize(new Dimension(BASE_LAYOUT_WIDTH, BASE_GAME_HEIGHT));
             
             // LEFT SIDE - Game area
             JPanel leftPanel = new JPanel();
@@ -1114,6 +1162,8 @@ public class ChessGame extends JFrame {
     if (spellChess) {
         centerGbc.gridy = fillerRow + 1;
         centerGbc.anchor = GridBagConstraints.SOUTH;
+        centerGbc.fill = GridBagConstraints.HORIZONTAL;
+        centerGbc.weightx = 1.0;
         centerGbc.insets = new Insets(6, 6, 8, 6);
         whiteSpellPanel = createSpellPanel(true);
         centerPanel.add(whiteSpellPanel, centerGbc);
@@ -1190,12 +1240,20 @@ public class ChessGame extends JFrame {
             
             JPanel windowPanel = new JPanel(new GridBagLayout());
             windowPanel.setBackground(new Color(64, 64, 64));
+            windowPanel.putClientProperty(
+                    ProportionalUiScaler.SKIP_SUBTREE_PROPERTY,
+                    Boolean.TRUE);
             GridBagConstraints windowGbc = new GridBagConstraints();
             windowGbc.gridx = 0;
             windowGbc.gridy = 0;
-            windowGbc.anchor = GridBagConstraints.NORTHWEST;
+            windowGbc.weightx = 1.0;
+            windowGbc.weighty = 1.0;
+            windowGbc.anchor = GridBagConstraints.CENTER;
             windowPanel.add(mainPanel, windowGbc);
-            setContentPane(windowPanel);
+            embeddedHotkeyTarget = windowPanel;
+            if (appHost == null) {
+                setContentPane(windowPanel);
+            }
             installFitToScreenLayout(
                 windowPanel,
                 mainPanel,
@@ -1209,16 +1267,22 @@ public class ChessGame extends JFrame {
                 BASE_CENTER_WIDTH / (double) (BASE_CENTER_WIDTH + BASE_RIGHT_WIDTH)
             ));
             bindGameHotkeys();
+            if (appHost != null) installAltF4Hotkey();
             syncBoardEnterHotkeyMode();
             // In online mode we start immediately; in bot mode we start immediately; in local mode we start after pressing Start Game.
             if ((onlineMode || isBotGame) && whiteTimeRemaining > 0 && blackTimeRemaining > 0) {
                 startTimer();
             }
-            pack();
-            applyMinimumContentSize(BASE_GAME_WIDTH, BASE_GAME_HEIGHT);
-            setLocationRelativeTo(null);
-            setVisible(true);
-            FullscreenToggle.enter(this);
+            if (appHost == null) {
+                pack();
+                applyMinimumContentSize(BASE_GAME_WIDTH, BASE_GAME_HEIGHT);
+                setLocationRelativeTo(null);
+                setVisible(true);
+                FullscreenToggle.enter(this);
+            } else {
+                appHost.showEmbeddedScreen(windowPanel, this::cleanupEmbeddedGame);
+                appHost.finishGameLaunchOverlay(windowPanel);
+            }
             SwingUtilities.invokeLater(() -> setLeftDividerToMaximum(leftPanel));
             setupPlayerLabels();
             refreshSpellUI();
@@ -1229,10 +1293,10 @@ public class ChessGame extends JFrame {
 	    }
 	    
         private void installAltF4Hotkey() {
-            JRootPane root = getRootPane();
-            if (root == null) return;
-            InputMap im = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-            ActionMap am = root.getActionMap();
+            JComponent target = appHost == null ? getRootPane() : embeddedHotkeyTarget;
+            if (target == null) return;
+            InputMap im = target.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+            ActionMap am = target.getActionMap();
             im.put(KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F4,
                 java.awt.event.InputEvent.ALT_DOWN_MASK
@@ -1240,7 +1304,7 @@ public class ChessGame extends JFrame {
             am.put("altF4CloseGame", new AbstractAction() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
-                    showExitConfirmationDialog();
+                    exitApplication();
                 }
             });
         }
@@ -1295,8 +1359,10 @@ public class ChessGame extends JFrame {
             double scale = Math.min(availableW / (double) BASE_LAYOUT_WIDTH, availableH / (double) BASE_GAME_HEIGHT);
             if (!Double.isFinite(scale) || scale <= 0) scale = 1.0;
 
-            int leftHeight = Math.max(scaled(BASE_GAME_HEIGHT, scale), availableH);
-            int mainWidth = Math.max(scaled(BASE_LAYOUT_WIDTH, scale), availableW);
+            // Fill the host viewport. The board column keeps its own aspect ratio,
+            // while the center and settings columns absorb the remaining width.
+            int leftHeight = availableH;
+            int mainWidth = availableW;
 
             setFixedSize(mainPanel, mainWidth, leftHeight);
             setFixedSize(leftMainSplitPane, mainWidth, leftHeight);
@@ -1565,6 +1631,7 @@ public class ChessGame extends JFrame {
             if (applyingResponsiveControlScale) return;
             applyingResponsiveControlScale = true;
             try {
+                synchronizeSpellPanelSizes(centerPanel);
                 scaleResponsiveControls(
                     centerPanel,
                     responsiveScale(centerPanel.getWidth(), BASE_CENTER_WIDTH)
@@ -1574,12 +1641,23 @@ public class ChessGame extends JFrame {
                     responsiveScale(rightPanel.getWidth(), BASE_RIGHT_WIDTH)
                 );
                 syncExpandedTimeDetailsHeight();
+                updateTimeControlPanelSize();
                 centerPanel.revalidate();
                 rightPanel.revalidate();
                 centerPanel.repaint();
                 rightPanel.repaint();
             } finally {
                 applyingResponsiveControlScale = false;
+            }
+        }
+
+        private void synchronizeSpellPanelSizes(JPanel centerPanel) {
+            if (centerPanel == null || whiteSpellPanel == null || blackSpellPanel == null) return;
+            int width = Math.max(1, centerPanel.getWidth() - 12);
+            for (JPanel spellPanel : new JPanel[]{blackSpellPanel, whiteSpellPanel}) {
+                if (spellPanel instanceof SpellDeckPanel) {
+                    ((SpellDeckPanel) spellPanel).setResponsiveWidth(width);
+                }
             }
         }
 
@@ -2143,7 +2221,7 @@ public class ChessGame extends JFrame {
             showGamePopup("Resign", "You resigned. " + winner + " wins.");
             // Clean up and close the game window
             if (networkManager != null) networkManager.close();
-            dispose();
+            returnToApplicationMenu();
         }
 
         // Called when the user clicks Offer Draw
@@ -2158,7 +2236,7 @@ public class ChessGame extends JFrame {
                     setGameOverState();
                     showGamePopup("Draw", "Draw agreed.");
                     if (networkManager != null) networkManager.close();
-                    dispose();
+                    returnToApplicationMenu();
                 }
             }
         }
@@ -2168,7 +2246,7 @@ public class ChessGame extends JFrame {
             setGameOverState();
             showGamePopup("Resign", "Opponent resigned. You win!");
             if (networkManager != null) networkManager.close();
-            dispose();
+            returnToApplicationMenu();
         }
 
         public void onRemoteOfferDraw() {
@@ -2178,7 +2256,7 @@ public class ChessGame extends JFrame {
                 setGameOverState();
                 showGamePopup("Draw", "Draw agreed.");
                 if (networkManager != null) networkManager.close();
-                dispose();
+                returnToApplicationMenu();
             } else {
                 if (networkManager != null) networkManager.sendDrawResponse(false);
             }
@@ -2188,28 +2266,143 @@ public class ChessGame extends JFrame {
             setGameOverState();
             showGamePopup("Draw", "Opponent accepted the draw.");
             if (networkManager != null) networkManager.close();
-            dispose();
+            returnToApplicationMenu();
         }
 
         public void onRemoteDrawDeclined() {
             showGamePopup("Draw", "Opponent declined the draw.");
         }
 
-    private static class SpellDeckPanel extends JPanel {
+    private class SpellDeckPanel extends JPanel {
+        private JPanel titlePanel;
+        private JLabel titleLabel;
+        private JPanel cardsPanel;
+        private ElixirBar elixirBar;
+        private List<SpellCardButton> cardButtons;
+        private double uiScale = 1.0;
+        private int lastLayoutWidth = -1;
+        private int responsiveWidth = SPELL_PANEL_W;
+
         SpellDeckPanel() {
             setOpaque(false);
+            addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    int width = getWidth();
+                    if (width <= 0 || width == lastLayoutWidth) return;
+                    lastLayoutWidth = width;
+                    Container parent = getParent();
+                    if (parent != null) {
+                        SwingUtilities.invokeLater(() -> {
+                            parent.revalidate();
+                            parent.repaint();
+                        });
+                    }
+                }
+            });
         }
+
+        void configure(
+                JPanel titlePanel,
+                JLabel titleLabel,
+                JPanel cardsPanel,
+                ElixirBar elixirBar,
+                List<SpellCardButton> cardButtons) {
+            this.titlePanel = titlePanel;
+            this.titleLabel = titleLabel;
+            this.cardsPanel = cardsPanel;
+            this.elixirBar = elixirBar;
+            this.cardButtons = cardButtons;
+        }
+
+        double getUiScale() {
+            return uiScale;
+        }
+
+        void setResponsiveWidth(int width) {
+            responsiveWidth = Math.max(1, width);
+            int height = Math.max(1,
+                    (int) Math.round(responsiveWidth * SPELL_PANEL_H
+                            / (double) SPELL_PANEL_W));
+            Dimension responsiveSize = new Dimension(responsiveWidth, height);
+            super.setMinimumSize(responsiveSize);
+            super.setPreferredSize(responsiveSize);
+            super.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return new Dimension(responsiveWidth, Math.max(1,
+                    (int) Math.round(responsiveWidth * SPELL_PANEL_H
+                            / (double) SPELL_PANEL_W)));
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public void doLayout() {
+            uiScale = Math.max(0.01, getWidth() / (double) SPELL_PANEL_W);
+            if (titleLabel != null) {
+                titleLabel.setFont(new Font(
+                        "Arial", Font.BOLD, Math.max(8, spellScaled(16, uiScale))));
+            }
+            if (titlePanel != null) {
+                titlePanel.setBounds(
+                        spellScaled(8, uiScale),
+                        spellScaled(7, uiScale),
+                        spellScaled(484, uiScale),
+                        spellScaled(25, uiScale));
+            }
+            if (elixirBar != null) {
+                Dimension barSize = new Dimension(
+                        spellScaled(SPELL_BAR_W, uiScale),
+                        spellScaled(SPELL_BAR_H, uiScale));
+                elixirBar.setPreferredSize(barSize);
+                elixirBar.setMinimumSize(barSize);
+                elixirBar.setMaximumSize(barSize);
+                elixirBar.setBounds(
+                        spellScaled(20, uiScale),
+                        spellScaled(186, uiScale),
+                        barSize.width,
+                        barSize.height);
+            }
+            if (cardsPanel != null) {
+                Dimension cardsSize = new Dimension(
+                        spellScaled(SPELL_CARDS_W, uiScale),
+                        spellScaled(SPELL_CARDS_H, uiScale));
+                cardsPanel.setPreferredSize(cardsSize);
+                cardsPanel.setMinimumSize(cardsSize);
+                cardsPanel.setMaximumSize(cardsSize);
+                cardsPanel.setBounds(
+                        spellScaled(13, uiScale),
+                        spellScaled(36, uiScale),
+                        cardsSize.width,
+                        cardsSize.height);
+            }
+            if (cardButtons != null && !spellCardTransitionAnimating) {
+                for (int i = 0; i < cardButtons.size(); i++) {
+                    cardButtons.get(i).setBounds(getSpellSlotBounds(i, uiScale));
+                }
+            }
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            GradientPaint gp = new GradientPaint(0, 0, new Color(17, 92, 168), 0, getHeight(), new Color(10, 45, 114));
+            double sx = getWidth() / (double) SPELL_PANEL_W;
+            double sy = getHeight() / (double) SPELL_PANEL_H;
+            g2.scale(sx, sy);
+            GradientPaint gp = new GradientPaint(0, 0, new Color(17, 92, 168), 0, SPELL_PANEL_H, new Color(10, 45, 114));
             g2.setPaint(gp);
-            g2.fillRoundRect(0, 0, getWidth(), getHeight(), 14, 14);
+            g2.fillRoundRect(0, 0, SPELL_PANEL_W, SPELL_PANEL_H, 14, 14);
             g2.setColor(new Color(115, 181, 248));
-            g2.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 14, 14);
+            g2.drawRoundRect(1, 1, SPELL_PANEL_W - 3, SPELL_PANEL_H - 3, 14, 14);
             g2.setColor(new Color(4, 23, 63, 145));
-            g2.fillRoundRect(8, 8, getWidth() - 16, getHeight() - 16, 10, 10);
+            g2.fillRoundRect(8, 8, SPELL_PANEL_W - 16, SPELL_PANEL_H - 16, 10, 10);
             g2.dispose();
             super.paintComponent(g);
         }
@@ -2415,7 +2608,10 @@ public class ChessGame extends JFrame {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            int w = getWidth(), h = getHeight();
+            g2.scale(
+                    getWidth() / (double) SPELL_BAR_W,
+                    getHeight() / (double) SPELL_BAR_H);
+            int w = SPELL_BAR_W, h = SPELL_BAR_H;
             int badgeW = 104;
             int badgeH = 28;
             int barH = h - badgeH + 4;
@@ -2615,14 +2811,19 @@ public class ChessGame extends JFrame {
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
+            int designW = previewOnly ? SPELL_NEXT_W : SPELL_CARD_W;
+            int designH = previewOnly ? SPELL_NEXT_H : SPELL_CARD_H;
+            g2.scale(
+                    getWidth() / (double) designW,
+                    getHeight() / (double) designH);
             long nowMs = System.currentTimeMillis();
             boolean selectedCard = selectedVisual && !previewOnly;
             float selectedFloat = selectedCard
                 ? 1.1f * (float) Math.sin((nowMs - selectedSinceMs) * (2.0 * Math.PI / 2100.0))
                 : 0f;
             g2.translate(0, visualLift + selectedFloat);
-            int w = getWidth();
-            int h = getHeight();
+            int w = designW;
+            int h = designH;
             Color[] borderTheme = getBorderTheme();
             float pulse = 0.5f + 0.5f * (float) Math.sin(nowMs * (2.0 * Math.PI / 1800.0));
             boolean disabledCard = !isEnabled() && !previewOnly;
@@ -2905,11 +3106,10 @@ public class ChessGame extends JFrame {
     private JPanel createSpellPanel(boolean forWhite) {
         ensureSpellDeckInitialized();
         SpellDeckPanel panel = new SpellDeckPanel();
-        panel.setLayout(new BorderLayout(0, 10));
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        panel.setPreferredSize(new Dimension(500, 250));
-        panel.setMinimumSize(new Dimension(500, 250));
-        panel.setMaximumSize(new Dimension(500, 250));
+        panel.setLayout(null);
+        panel.setBorder(BorderFactory.createEmptyBorder());
+        panel.setPreferredSize(new Dimension(SPELL_PANEL_W, SPELL_PANEL_H));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
 
         JPanel top = new JPanel(new BorderLayout());
         top.setOpaque(false);
@@ -2918,19 +3118,19 @@ public class ChessGame extends JFrame {
         elixirLabel.setFont(new Font("Arial", Font.BOLD, 16));
         elixirLabel.setForeground(Color.WHITE);
         top.add(elixirLabel, BorderLayout.CENTER);
-        panel.add(top, BorderLayout.NORTH);
+        panel.add(top);
 
         ElixirBar elixirBar = new ElixirBar();
-        elixirBar.setPreferredSize(new Dimension(460, 56));
-        panel.add(elixirBar, BorderLayout.SOUTH);
+        elixirBar.setPreferredSize(new Dimension(SPELL_BAR_W, SPELL_BAR_H));
+        panel.add(elixirBar);
 
         JPanel cards = new JPanel();
         cards.setLayout(null);
         cards.setOpaque(false);
         cards.setBorder(BorderFactory.createEmptyBorder(4, 2, 0, 2));
-        cards.setPreferredSize(new Dimension(474, 146));
-        cards.setMinimumSize(new Dimension(474, 146));
-        cards.setMaximumSize(new Dimension(474, 146));
+        cards.setPreferredSize(new Dimension(SPELL_CARDS_W, SPELL_CARDS_H));
+        cards.setMinimumSize(new Dimension(SPELL_CARDS_W, SPELL_CARDS_H));
+        cards.setMaximumSize(new Dimension(SPELL_CARDS_W, SPELL_CARDS_H));
         List<SpellCardButton> cardButtons = forWhite ? whiteCardButtons : blackCardButtons;
         cardButtons.clear();
         for (int i = 0; i < TOTAL_SPELL_SLOTS; i++) {
@@ -2952,9 +3152,10 @@ public class ChessGame extends JFrame {
             cards.add(b);
             cardButtons.add(b);
         }
+        panel.configure(top, elixirLabel, cards, elixirBar, cardButtons);
         if (forWhite) whiteNextCardPreview = null;
         else blackNextCardPreview = null;
-        panel.add(cards, BorderLayout.CENTER);
+        panel.add(cards);
 
         if (forWhite) {
             whiteSpellElixirLabel = elixirLabel;
@@ -3017,7 +3218,7 @@ public class ChessGame extends JFrame {
                 blackPendingTargetSpellId = null;
             }
             if (!"Cancelled.".equals(error)) {
-                JOptionPane.showMessageDialog(this, error, "Spell", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(dialogOwner(), error, "Spell", JOptionPane.WARNING_MESSAGE);
             }
             refreshSpellUI();
             return;
@@ -3176,7 +3377,15 @@ public class ChessGame extends JFrame {
         }
     }
 
+    private static int spellScaled(int value, double scale) {
+        return Math.max(1, (int) Math.round(value * scale));
+    }
+
     private Rectangle getSpellSlotBounds(int slotIndex) {
+        return getSpellSlotBounds(slotIndex, 1.0);
+    }
+
+    private Rectangle getSpellSlotBounds(int slotIndex, double scale) {
         int x = SPELL_CARDS_START_X + slotIndex * (SPELL_CARD_W + SPELL_CARD_GAP);
         int y = SPELL_CARD_Y;
         int w = SPELL_CARD_W;
@@ -3187,7 +3396,18 @@ public class ChessGame extends JFrame {
             x += (SPELL_CARD_W - SPELL_NEXT_W) / 2;
             y += (SPELL_CARD_H - SPELL_NEXT_H) / 2;
         }
-        return new Rectangle(x, y, w, h);
+        return new Rectangle(
+                spellScaled(x, scale),
+                spellScaled(y, scale),
+                spellScaled(w, scale),
+                spellScaled(h, scale));
+    }
+
+    private double getSpellPanelScale(boolean forWhite) {
+        JPanel panel = forWhite ? whiteSpellPanel : blackSpellPanel;
+        return panel instanceof SpellDeckPanel
+                ? ((SpellDeckPanel) panel).getUiScale()
+                : 1.0;
     }
 
     private void animateAndApplySpellCardRotation(boolean forWhite, String spellId, int usedIndex, boolean pulse) {
@@ -3224,16 +3444,17 @@ public class ChessGame extends JFrame {
         List<SpellCardButton> movers = new ArrayList<>();
         List<Rectangle> from = new ArrayList<>();
         List<Rectangle> to = new ArrayList<>();
+        double panelScale = getSpellPanelScale(forWhite);
         for (int i = usedIndex + 1; i < PLAYABLE_SPELL_SLOTS; i++) {
             SpellCardButton b = buttons.get(i);
             movers.add(b);
             from.add(b.getBounds());
-            to.add(getSpellSlotBounds(i - 1));
+            to.add(getSpellSlotBounds(i - 1, panelScale));
         }
         SpellCardButton nextBtn = buttons.get(NEXT_SLOT_INDEX);
         movers.add(nextBtn);
         from.add(nextBtn.getBounds());
-        to.add(getSpellSlotBounds(PLAYABLE_SPELL_SLOTS - 1));
+        to.add(getSpellSlotBounds(PLAYABLE_SPELL_SLOTS - 1, panelScale));
 
         final long startNanos = System.nanoTime();
         final int durationMs = SPELL_CARD_TRANSITION_MS;
@@ -3252,8 +3473,9 @@ public class ChessGame extends JFrame {
             }
             if (p >= 1f) {
                 t.stop();
+                double finalScale = getSpellPanelScale(forWhite);
                 for (int i = 0; i < buttons.size(); i++) {
-                    buttons.get(i).setBounds(getSpellSlotBounds(i));
+                    buttons.get(i).setBounds(getSpellSlotBounds(i, finalScale));
                 }
                 used.setVisible(true);
                 applySpellCardRotation(forWhite, spellId, usedIndex, false, pulse);
@@ -3321,7 +3543,7 @@ public class ChessGame extends JFrame {
             if (board != null) board.releaseDeferredSpellVisualEffects();
             return;
         }
-        JLayeredPane layered = getLayeredPane();
+        JLayeredPane layered = appHost != null ? appHost.getLayeredPane() : getLayeredPane();
         if (layered == null || layered.getWidth() <= 0 || layered.getHeight() <= 0) {
             board.releaseDeferredSpellVisualEffects();
             return;
@@ -3663,8 +3885,8 @@ public class ChessGame extends JFrame {
 
     private void bindGameHotkeys() {
         if (board == null) return;
-        JRootPane root = getRootPane();
-        JComponent hotkeyTarget = root != null ? root : board;
+        JComponent hotkeyTarget = appHost == null ? getRootPane() : embeddedHotkeyTarget;
+        if (hotkeyTarget == null) hotkeyTarget = board;
         InputMap im = hotkeyTarget.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap am = hotkeyTarget.getActionMap();
         im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_1, 0), "spellCard1Hotkey");
@@ -4598,20 +4820,60 @@ public class ChessGame extends JFrame {
             timeDetailsAnimTimer.stop();
         }
         timeDetailsExpanded = !timeDetailsExpanded;
-        if (timeDetailsExpanded) syncExpandedTimeDetailsHeight();
-        applyTimeDetailsHeight(timeDetailsExpanded ? timeDetailsExpandedHeight : 0);
+        if (timeDetailsExpanded) updateTimeDetailsExpandedHeight();
+        animateTimeDetailsHeight(timeDetailsExpanded ? timeDetailsExpandedHeight : 0);
+        if (timeSelectBtn != null) timeSelectBtn.repaint();
+    }
+
+    private void animateTimeDetailsHeight(int targetHeight) {
+        int startHeight = timeDetailsCurrentHeight;
+        int target = Math.max(0, Math.min(timeDetailsExpandedHeight, targetHeight));
+        if (startHeight == target) {
+            applyTimeDetailsHeight(target);
+            return;
+        }
+
+        float distanceRatio = Math.abs(target - startHeight)
+                / (float) Math.max(1, timeDetailsExpandedHeight);
+        int durationMs = Math.max(120, Math.round(TIME_DETAILS_ANIMATION_MS * distanceRatio));
+        long startedAtNanos = System.nanoTime();
+
+        timeDetailsAnimTimer = new Timer(16, null);
+        timeDetailsAnimTimer.addActionListener(e -> {
+            float elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000f;
+            float progress = Math.min(1f, elapsedMs / durationMs);
+            float eased = progress * progress * (3f - 2f * progress);
+            int height = Math.round(startHeight + (target - startHeight) * eased);
+            applyTimeDetailsHeight(height);
+
+            if (progress >= 1f) {
+                ((Timer) e.getSource()).stop();
+                timeDetailsAnimTimer = null;
+                applyTimeDetailsHeight(target);
+            }
+        });
+        timeDetailsAnimTimer.setCoalesce(true);
+        timeDetailsAnimTimer.setInitialDelay(0);
+        timeDetailsAnimTimer.start();
     }
 
     private void syncExpandedTimeDetailsHeight() {
-        if (timeDetailsPanel == null) return;
+        int preferredHeight = updateTimeDetailsExpandedHeight();
+        if (timeDetailsExpanded
+                && (timeDetailsAnimTimer == null || !timeDetailsAnimTimer.isRunning())
+                && timeDetailsCurrentHeight != preferredHeight) {
+            applyTimeDetailsHeight(preferredHeight);
+        }
+    }
+
+    private int updateTimeDetailsExpandedHeight() {
+        if (timeDetailsPanel == null) return Math.max(1, timeDetailsExpandedHeight);
         int preferredHeight = Math.max(1, timeDetailsPanel.getPreferredSize().height);
         timeDetailsExpandedHeight = preferredHeight;
         if (timeDetailsHostPanel != null) {
             timeDetailsHostPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, preferredHeight));
         }
-        if (timeDetailsExpanded && timeDetailsCurrentHeight != preferredHeight) {
-            applyTimeDetailsHeight(preferredHeight);
-        }
+        return preferredHeight;
     }
 
     private void applyTimeDetailsHeight(int h) {
@@ -4621,6 +4883,7 @@ public class ChessGame extends JFrame {
         timeDetailsHostPanel.setMinimumSize(new Dimension(0, clamped));
         timeDetailsHostPanel.setPreferredSize(new Dimension(TIME_CONTROL_WIDTH, clamped));
         timeDetailsHostPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, clamped));
+        updateTimeControlPanelSize();
         timeDetailsHostPanel.revalidate();
         if (timeControlPanel != null) {
             timeControlPanel.revalidate();
@@ -4634,6 +4897,24 @@ public class ChessGame extends JFrame {
         if (timeSelectBtn != null) {
             timeSelectBtn.repaint();
         }
+    }
+
+    private void updateTimeControlPanelSize() {
+        if (timeControlPanel == null) return;
+        int selectHeight = timeSelectBtn == null ? 0 : timeSelectBtn.getPreferredSize().height;
+        int detailsHeight = timeDetailsHostPanel == null
+                ? 0
+                : timeDetailsHostPanel.getPreferredSize().height;
+        int startHeight = startGameBtn == null ? 0 : startGameBtn.getPreferredSize().height;
+        Insets insets = timeControlPanel.getInsets();
+        int requiredHeight = selectHeight + detailsHeight + 14 + startHeight
+                + insets.top + insets.bottom;
+        int preferredWidth = Math.max(
+                MIN_TIME_CONTROL_WIDTH,
+                timeSelectBtn == null ? TIME_CONTROL_WIDTH
+                        : timeSelectBtn.getPreferredSize().width);
+        timeControlPanel.setPreferredSize(new Dimension(preferredWidth, requiredHeight));
+        timeControlPanel.setMinimumSize(new Dimension(MIN_TIME_CONTROL_WIDTH, requiredHeight));
     }
 
     private void selectPreset(TimePreset preset) {
@@ -4659,7 +4940,7 @@ public class ChessGame extends JFrame {
         p.add(new JLabel("Increment (sec):"));
         p.add(increment);
 
-        int result = JOptionPane.showConfirmDialog(this, p, "Custom Time Control", JOptionPane.OK_CANCEL_OPTION);
+        int result = JOptionPane.showConfirmDialog(dialogOwner(), p, "Custom Time Control", JOptionPane.OK_CANCEL_OPTION);
         if (result != JOptionPane.OK_OPTION) return null;
 
         int m = (Integer) minutes.getValue();
@@ -4763,17 +5044,52 @@ public class ChessGame extends JFrame {
 
     // â”€â”€ Called by Board popup Exit button and the in-game Exit button â”€â”€â”€â”€â”€
     public void exitToMenu() {
+        returnToApplicationMenu();
+    }
+
+    private void returnToApplicationMenu() {
+        cleanupEmbeddedGame();
+        if (appHost != null) {
+            appHost.returnToMenuFromEmbeddedScreen();
+        } else {
+            dispose();
+            SwingUtilities.invokeLater(() -> new MainMenu());
+        }
+    }
+
+    private void cleanupEmbeddedGame() {
         stopTimer();
-        if (networkManager != null) networkManager.close();
+        cancelSpellResolutionLock();
+        if (networkManager != null) {
+            networkManager.close();
+            networkManager = null;
+        }
+        if (stockfishEngine != null) {
+            try {
+                stockfishEngine.close();
+            } catch (Exception ignored) {
+            }
+            stockfishEngine = null;
+        }
+    }
+
+    private void exitApplication() {
+        cleanupEmbeddedGame();
+        if (appHost != null) {
+            appHost.dispose();
+        }
         dispose();
-        SwingUtilities.invokeLater(() -> new MainMenu());
+        System.exit(0);
     }
 
     private void showExitConfirmationDialog() {
-        stopTimer();
-        if (networkManager != null) networkManager.close();
-        dispose();
-        System.exit(0);
+        cleanupEmbeddedGame();
+        if (appHost != null) {
+            appHost.returnToMenuFromEmbeddedScreen();
+        } else {
+            dispose();
+            System.exit(0);
+        }
     }
 
     private JButton buildExitDialogButton(String text, Color fg, Color bg, Color border) {
@@ -4852,6 +5168,7 @@ public class ChessGame extends JFrame {
         stopTimer();
         SoundManager.stopAllSounds();
         clearGameOverState();
+        cancelAllSpellSelections();
         botMoveInProgress = false;
         uciMoves.setLength(0);
         timerStarted = false;

@@ -790,9 +790,8 @@ public class OnlinePanel extends JPanel {
             }
             @Override public void onConnected(boolean amWhite) {
                 setStatus("Opponent connected. You are " + (amWhite ? "White" : "Black"));
-                SwingUtilities.invokeLater(() -> {
-                    parent.dispose();
-                    ChessGame cg = new ChessGame(selectedPreset.initialSeconds, selectedPreset.incrementSeconds, net, amWhite, selectedVariant);
+                parent.launchGameWithOverlay(() -> {
+                    ChessGame cg = new ChessGame(parent, selectedPreset.initialSeconds, selectedPreset.incrementSeconds, net, amWhite, selectedVariant);
                     List<Runnable> replay;
                     synchronized (pendingEvents) {
                         gameRef[0] = cg;
@@ -853,9 +852,8 @@ public class OnlinePanel extends JPanel {
             }
             @Override public void onConnected(boolean amWhite) {
                 setStatus("Connected. You are " + (amWhite ? "White" : "Black"));
-                SwingUtilities.invokeLater(() -> {
-                    parent.dispose();
-                    ChessGame cg = new ChessGame(selectedPreset.initialSeconds, selectedPreset.incrementSeconds, net, amWhite, selectedVariant);
+                parent.launchGameWithOverlay(() -> {
+                    ChessGame cg = new ChessGame(parent, selectedPreset.initialSeconds, selectedPreset.incrementSeconds, net, amWhite, selectedVariant);
                     List<Runnable> replay;
                     synchronized (pendingEvents) {
                         gameRef[0] = cg;

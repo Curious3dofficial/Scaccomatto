@@ -58,11 +58,39 @@ public class MainMenu extends JFrame implements ActionListener {
     private ThemeToggleButton mainMenuThemeToggle;
     private final Deque<String> navigationHistory = new ArrayDeque<>();
     private String currentCard = "MENU";
+    private JComponent activeScreen;
+    private Runnable activeScreenCleanup;
+    private ProportionalUiScaler proportionalUiScaler;
+    private int fullscreenDesignWidth;
+    private int fullscreenDesignHeight;
     private boolean exitDialogOpen = false;
+    private JComponent gameLaunchOverlay;
+    private Timer gameLaunchOverlayTimer;
+    private long gameLaunchOverlayStartedAt;
+    private static final int GAME_LAUNCH_OVERLAY_MS = 3000;
+    private StartupIntroPane startupIntroPane;
+    private Timer startupIntroTimer;
+    private static final long STARTUP_INTRO_MS = 5000L;
+    private static final long STARTUP_MENU_REVEAL_MS = 1000L;
     
     public MainMenu() {
         setTitle("Scaccomatto");
-        setSize(1440, 810);
+        Rectangle screenBounds = GraphicsEnvironment
+                .getLocalGraphicsEnvironment()
+                .getDefaultScreenDevice()
+                .getDefaultConfiguration()
+                .getBounds();
+        fullscreenDesignWidth = Math.max(1, screenBounds.width);
+        fullscreenDesignHeight = Math.max(1, screenBounds.height);
+        double launchScale = 0.78;
+        int launchWidth = Math.max(960, (int) Math.round(fullscreenDesignWidth * launchScale));
+        int launchHeight = Math.max(540, (int) Math.round(fullscreenDesignHeight * launchScale));
+        setSize(
+                Math.min(fullscreenDesignWidth, launchWidth),
+                Math.min(fullscreenDesignHeight, launchHeight));
+        setMinimumSize(new Dimension(
+                Math.min(fullscreenDesignWidth, 960),
+                Math.min(fullscreenDesignHeight, 540)));
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setResizable(true);
         setLocationRelativeTo(null);
@@ -103,8 +131,194 @@ public class MainMenu extends JFrame implements ActionListener {
         showCard("MENU", false);
         installGlobalEscapeBackKey();
         installAltF4Hotkey();
-        
+        installStartupIntro();
         setVisible(true);
+        proportionalUiScaler = new ProportionalUiScaler(
+                mainPanel,
+                fullscreenDesignWidth,
+                fullscreenDesignHeight);
+        SwingUtilities.invokeLater(this::startStartupIntro);
+    }
+
+    private void installStartupIntro() {
+        startupIntroPane = new StartupIntroPane(loadStartupIntroImage());
+        startupIntroPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(
+                KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0),
+                "skipStartupIntro");
+        startupIntroPane.getActionMap().put("skipStartupIntro", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                skipStartupIntro();
+            }
+        });
+        setGlassPane(startupIntroPane);
+        startupIntroPane.setVisible(true);
+    }
+
+    private void startStartupIntro() {
+        if (startupIntroPane == null) return;
+        if (startupIntroTimer != null) startupIntroTimer.stop();
+        long startedAt = System.currentTimeMillis();
+        startupIntroTimer = new Timer(16, e -> {
+            long elapsed = System.currentTimeMillis() - startedAt;
+            startupIntroPane.setElapsedMs(elapsed);
+            if (elapsed < STARTUP_INTRO_MS + STARTUP_MENU_REVEAL_MS) return;
+            ((Timer) e.getSource()).stop();
+            startupIntroTimer = null;
+            startupIntroPane.setVisible(false);
+            mainPanel.requestFocusInWindow();
+        });
+        startupIntroTimer.setCoalesce(true);
+        startupIntroTimer.start();
+    }
+
+    private void skipStartupIntro() {
+        if (startupIntroPane == null || !startupIntroPane.isVisible()) return;
+        if (startupIntroTimer != null) {
+            startupIntroTimer.stop();
+            startupIntroTimer = null;
+        }
+        startupIntroPane.setVisible(false);
+        mainPanel.requestFocusInWindow();
+    }
+
+    private BufferedImage loadStartupIntroImage() {
+        try {
+            URL url = getClass().getResource("/assets/screens/alekhine.png");
+            if (url != null) return ImageIO.read(url);
+        } catch (IOException ignored) {
+        }
+        String[] paths = {
+            "Scaccomatto_final/Scaccomatto/src/assets/screens/alekhine.png",
+            "src/assets/screens/alekhine.png",
+            "assets/screens/alekhine.png"
+        };
+        for (String path : paths) {
+            try {
+                File file = new File(path);
+                if (file.isFile()) return ImageIO.read(file);
+            } catch (IOException ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static class StartupIntroPane extends JComponent {
+        private final BufferedImage image;
+        private long elapsedMs;
+
+        StartupIntroPane(BufferedImage image) {
+            this.image = image;
+            setOpaque(false);
+            setFocusable(true);
+            enableEvents(AWTEvent.MOUSE_EVENT_MASK
+                    | AWTEvent.MOUSE_MOTION_EVENT_MASK
+                    | AWTEvent.KEY_EVENT_MASK);
+        }
+
+        void setElapsedMs(long elapsedMs) {
+            this.elapsedMs = Math.max(0L, elapsedMs);
+            repaint();
+        }
+
+        @Override
+        protected void processMouseEvent(MouseEvent e) {
+            e.consume();
+        }
+
+        @Override
+        protected void processMouseMotionEvent(MouseEvent e) {
+            e.consume();
+        }
+
+        @Override
+        protected void processKeyEvent(KeyEvent e) {
+            e.consume();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            float revealT = clamp01((elapsedMs - STARTUP_INTRO_MS)
+                    / (float) STARTUP_MENU_REVEAL_MS);
+            float overlayAlpha = 1f - smoothStep(revealT);
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, overlayAlpha));
+            g.setColor(Color.BLACK);
+            g.fillRect(0, 0, getWidth(), getHeight());
+
+            float introT = clamp01(elapsedMs / (float) STARTUP_INTRO_MS);
+            float imageAlpha = introImageAlpha(introT) * overlayAlpha;
+            if (image != null && imageAlpha > 0.001f) {
+                float scale = 1.075f - 0.075f * smoothStep(introT);
+                int baseW = getWidth();
+                int baseH = Math.max(1, Math.round(baseW * image.getHeight()
+                        / (float) image.getWidth()));
+                if (baseH > getHeight()) {
+                    baseH = getHeight();
+                    baseW = Math.max(1, Math.round(baseH * image.getWidth()
+                            / (float) image.getHeight()));
+                }
+                int drawW = Math.max(1, Math.round(baseW * scale));
+                int drawH = Math.max(1, Math.round(baseH * scale));
+                int x = (getWidth() - drawW) / 2;
+                int y = (getHeight() - drawH) / 2;
+
+                float pulse = introPulse(introT);
+                if (pulse > 0f) {
+                    float radius = Math.max(1f, Math.min(getWidth(), getHeight()) * 0.46f);
+                    g.setComposite(AlphaComposite.getInstance(
+                            AlphaComposite.SRC_OVER,
+                            Math.min(1f, pulse * 0.34f * overlayAlpha)));
+                    g.setPaint(new RadialGradientPaint(
+                            new Point(getWidth() / 2, getHeight() / 2),
+                            radius,
+                            new float[]{0f, 0.38f, 1f},
+                            new Color[]{
+                                new Color(255, 255, 255, 210),
+                                new Color(184, 211, 255, 80),
+                                new Color(0, 0, 0, 0)
+                            }));
+                    g.fillRect(0, 0, getWidth(), getHeight());
+                }
+
+                g.setComposite(AlphaComposite.getInstance(
+                        AlphaComposite.SRC_OVER, imageAlpha));
+                g.drawImage(image, x, y, drawW, drawH, null);
+            }
+            g.dispose();
+        }
+
+        private static float introImageAlpha(float t) {
+            if (t < 0.18f) return smoothStep(t / 0.18f);
+            if (t < 0.76f) return 1f;
+            return 1f - smoothStep((t - 0.76f) / 0.24f);
+        }
+
+        private static float introPulse(float t) {
+            float first = pulseAt(t, 0.25f, 0.16f);
+            float second = pulseAt(t, 0.64f, 0.20f) * 0.72f;
+            return Math.max(first, second);
+        }
+
+        private static float pulseAt(float t, float center, float width) {
+            float distance = Math.abs(t - center) / Math.max(0.001f, width);
+            if (distance >= 1f) return 0f;
+            float edge = 1f - distance;
+            return edge * edge * (3f - 2f * edge);
+        }
+
+        private static float smoothStep(float t) {
+            t = clamp01(t);
+            return t * t * (3f - 2f * t);
+        }
+
+        private static float clamp01(float value) {
+            return Math.max(0f, Math.min(1f, value));
+        }
     }
 
     private void installAltF4Hotkey() {
@@ -145,10 +359,102 @@ public class MainMenu extends JFrame implements ActionListener {
     }
 
     private void goBackOneScreen() {
+        if ("ACTIVE_SCREEN".equals(currentCard)) {
+            clearEmbeddedScreen();
+        }
         if (!navigationHistory.isEmpty()) {
             String previous = navigationHistory.pop();
             cardLayout.show(mainPanel, previous);
             currentCard = previous;
+            mainPanel.revalidate();
+            mainPanel.repaint();
+        }
+    }
+
+    public void showEmbeddedScreen(JComponent screen, Runnable cleanup) {
+        if (screen == null) return;
+        boolean replacingEmbeddedScreen = "ACTIVE_SCREEN".equals(currentCard);
+        String previousCard = currentCard;
+        clearEmbeddedScreen();
+        activeScreen = screen;
+        activeScreenCleanup = cleanup;
+        mainPanel.add(screen, "ACTIVE_SCREEN");
+        if (proportionalUiScaler != null) {
+            proportionalUiScaler.registerTree(screen);
+        }
+        if (!replacingEmbeddedScreen && previousCard != null) {
+            navigationHistory.push(previousCard);
+        }
+        cardLayout.show(mainPanel, "ACTIVE_SCREEN");
+        currentCard = "ACTIVE_SCREEN";
+        mainPanel.revalidate();
+        mainPanel.repaint();
+        screen.requestFocusInWindow();
+    }
+
+    public void beginGameLaunchOverlay() {
+        if (gameLaunchOverlayTimer != null) {
+            gameLaunchOverlayTimer.stop();
+            gameLaunchOverlayTimer = null;
+        }
+        if (gameLaunchOverlay == null) {
+            JPanel overlay = new JPanel();
+            overlay.setOpaque(true);
+            overlay.setBackground(Color.WHITE);
+            overlay.setFocusTraversalKeysEnabled(false);
+            gameLaunchOverlay = overlay;
+        }
+        gameLaunchOverlayStartedAt = System.currentTimeMillis();
+        setGlassPane(gameLaunchOverlay);
+        gameLaunchOverlay.setVisible(true);
+        gameLaunchOverlay.revalidate();
+        gameLaunchOverlay.repaint();
+        gameLaunchOverlay.paintImmediately(gameLaunchOverlay.getBounds());
+    }
+
+    public void launchGameWithOverlay(Runnable launchAction) {
+        if (launchAction == null) return;
+        if (!SwingUtilities.isEventDispatchThread()) {
+            SwingUtilities.invokeLater(() -> launchGameWithOverlay(launchAction));
+            return;
+        }
+        beginGameLaunchOverlay();
+        // Let Swing paint the white frame before game construction occupies the EDT.
+        SwingUtilities.invokeLater(launchAction);
+    }
+
+    public void finishGameLaunchOverlay(JComponent gameScreen) {
+        if (gameLaunchOverlay == null || !gameLaunchOverlay.isVisible()) return;
+        long elapsed = System.currentTimeMillis() - gameLaunchOverlayStartedAt;
+        int remaining = (int) Math.max(0, GAME_LAUNCH_OVERLAY_MS - elapsed);
+        gameLaunchOverlayTimer = new Timer(remaining, e -> {
+            ((Timer) e.getSource()).stop();
+            gameLaunchOverlayTimer = null;
+            gameLaunchOverlay.setVisible(false);
+            if (gameScreen != null) {
+                gameScreen.requestFocusInWindow();
+            }
+        });
+        gameLaunchOverlayTimer.setRepeats(false);
+        gameLaunchOverlayTimer.start();
+    }
+
+    public void returnToMenuFromEmbeddedScreen() {
+        clearEmbeddedScreen();
+        navigationHistory.clear();
+        cardLayout.show(mainPanel, "MENU");
+        currentCard = "MENU";
+        mainPanel.revalidate();
+        mainPanel.repaint();
+    }
+
+    private void clearEmbeddedScreen() {
+        Runnable cleanup = activeScreenCleanup;
+        activeScreenCleanup = null;
+        if (cleanup != null) cleanup.run();
+        if (activeScreen != null) {
+            mainPanel.remove(activeScreen);
+            activeScreen = null;
         }
     }
 
@@ -717,8 +1023,8 @@ public class MainMenu extends JFrame implements ActionListener {
         play.putClientProperty("roundedBorderColor", new Color(145, 198, 115));
         play.setBorder(BorderFactory.createEmptyBorder(8, 32, 8, 32));
         play.addActionListener(e -> {
-            this.dispose();
-            new ChessGame(600, 0, selectedLocalVariant);
+            launchGameWithOverlay(
+                    () -> new ChessGame(this, 600, 0, selectedLocalVariant));
         });
 
         // Local variant keybinds:
@@ -1277,28 +1583,6 @@ public class MainMenu extends JFrame implements ActionListener {
     }
     
         private void showBotSelectionScreen() {
-        JFrame botFrame = new JFrame("Select Bot Opponent");
-        botFrame.setSize(1440, 810);
-        botFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        botFrame.setLocationRelativeTo(this);
-        botFrame.setResizable(true);
-        JRootPane botRoot = botFrame.getRootPane();
-        if (botRoot != null) {
-            InputMap bim = botRoot.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-            ActionMap bam = botRoot.getActionMap();
-            bim.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeBotSelection");
-            bam.put("closeBotSelection", new AbstractAction() {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    botFrame.dispose();
-                    MainMenu.this.showMenu();
-                    MainMenu.this.setState(Frame.NORMAL);
-                    MainMenu.this.toFront();
-                    MainMenu.this.requestFocus();
-                }
-            });
-        }
-
         JPanel mainContainer = new JPanel(new BorderLayout()) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -1318,6 +1602,15 @@ public class MainMenu extends JFrame implements ActionListener {
             }
         };
         mainContainer.setBorder(BorderFactory.createEmptyBorder(26, 34, 22, 34));
+        InputMap bim = mainContainer.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap bam = mainContainer.getActionMap();
+        bim.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeBotSelection");
+        bam.put("closeBotSelection", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                MainMenu.this.returnToMenuFromEmbeddedScreen();
+            }
+        });
 
         JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
@@ -1467,13 +1760,11 @@ public class MainMenu extends JFrame implements ActionListener {
         BotPanel botPanel = new BotPanel();
         botPanel.setStartGameListener(e -> {
             ChessBot selectedBot = botPanel.getSelectedBot();
-            botFrame.dispose();
-            this.dispose();
-            new ChessGame(600, 0, selectedBot);
+            launchGameWithOverlay(
+                    () -> new ChessGame(this, 600, 0, selectedBot));
         });
         botPanel.setSpectateListener(e -> {
             ChessBot selectedBot = botPanel.getSelectedBot();
-            botFrame.dispose();
             showSpectateSelectionScreen(selectedBot);
         });
         botPanel.setBotSelectionListener(bot -> updateBotInfoPanel(bot, botPhotoLabel, botNameLabel, botStatsLabel, infoText));
@@ -1491,7 +1782,7 @@ public class MainMenu extends JFrame implements ActionListener {
         backButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         backButton.putClientProperty("roundedBorderColor", new Color(108, 114, 126));
         backButton.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
-        backButton.addActionListener(ev -> botFrame.dispose());
+        backButton.addActionListener(ev -> returnToMenuFromEmbeddedScreen());
         backPanel.add(backButton);
 
         rightCard.add(botPanel, BorderLayout.CENTER);
@@ -1503,17 +1794,10 @@ public class MainMenu extends JFrame implements ActionListener {
         mainContainer.add(header, BorderLayout.NORTH);
         mainContainer.add(body, BorderLayout.CENTER);
 
-        botFrame.add(mainContainer);
-        botFrame.setVisible(true);
+        showEmbeddedScreen(mainContainer, null);
     }
 
     private void showSpectateSelectionScreen(ChessBot preferredBot) {
-        JFrame spectateFrame = new JFrame("Spectate Bot Match");
-        spectateFrame.setSize(1180, 700);
-        spectateFrame.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        spectateFrame.setLocationRelativeTo(this);
-        spectateFrame.setResizable(true);
-
         JPanel root = new JPanel(new BorderLayout(0, 22)) {
             @Override
             protected void paintComponent(Graphics g) {
@@ -1615,9 +1899,8 @@ public class MainMenu extends JFrame implements ActionListener {
         startBtn.addActionListener(ev -> {
             ChessBot whiteBot = (ChessBot) whiteBotBox.getSelectedItem();
             ChessBot blackBot = (ChessBot) blackBotBox.getSelectedItem();
-            spectateFrame.dispose();
-            this.dispose();
-            new ChessGame(600, 0, whiteBot, blackBot, true);
+            launchGameWithOverlay(
+                    () -> new ChessGame(this, 600, 0, whiteBot, blackBot, true));
         });
 
         JButton backBtn = createRoundedFillButton("Back", 15);
@@ -1626,7 +1909,7 @@ public class MainMenu extends JFrame implements ActionListener {
         backBtn.setBackground(new Color(73, 79, 92));
         backBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         backBtn.putClientProperty("roundedBorderColor", new Color(124, 132, 148));
-        backBtn.addActionListener(ev -> spectateFrame.dispose());
+        backBtn.addActionListener(ev -> showBotSelectionScreen());
 
         JPanel actions = new JPanel(new BorderLayout());
         actions.setOpaque(false);
@@ -1643,8 +1926,16 @@ public class MainMenu extends JFrame implements ActionListener {
         root.add(center, BorderLayout.CENTER);
         root.add(actions, BorderLayout.SOUTH);
 
-        spectateFrame.add(root);
-        spectateFrame.setVisible(true);
+        InputMap im = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap am = root.getActionMap();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "backToBotSelection");
+        am.put("backToBotSelection", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                showBotSelectionScreen();
+            }
+        });
+        showEmbeddedScreen(root, null);
     }
 
     private JPanel createSpectateBotSelectorCard(String heading, JComboBox<ChessBot> comboBox, boolean whiteSide) {
@@ -1889,8 +2180,7 @@ public class MainMenu extends JFrame implements ActionListener {
                 break;
 
             case "PUZZLES":
-                this.dispose();
-                new puzzles();
+                new puzzles(this);
                 break;
 
             case "LESSONS":
@@ -1898,8 +2188,7 @@ public class MainMenu extends JFrame implements ActionListener {
                 break;
                 
             case "START_ANALYSIS":
-                this.dispose();
-                new AnalysisGame();
+                new AnalysisGame(this);
                 break;
                 
             case "CREDITS":

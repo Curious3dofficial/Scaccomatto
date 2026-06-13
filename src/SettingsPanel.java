@@ -5,6 +5,11 @@ import javax.swing.plaf.basic.BasicComboPopup;
 import javax.swing.plaf.basic.BasicScrollBarUI;
 import javax.swing.plaf.basic.ComboPopup;
 import java.awt.*;
+import java.awt.event.AWTEventListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
+import java.awt.event.MouseListener;
+import java.awt.event.MouseWheelEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.util.ArrayList;
 import java.util.List;
@@ -194,6 +199,7 @@ public class SettingsPanel extends JPanel {
         controlsScrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
         controlsScrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         controlsScrollPane.setWheelScrollingEnabled(true);
+        controlsScrollPane.getViewport().addChangeListener(e -> closeOpenDropdowns());
         JScrollBar verticalScrollBar = controlsScrollPane.getVerticalScrollBar();
         verticalScrollBar.setUnitIncrement(14);
         verticalScrollBar.setPreferredSize(new Dimension(0, 0));
@@ -245,6 +251,7 @@ public class SettingsPanel extends JPanel {
             String theme = (String) themesDropdown.getSelectedItem();
             if (board != null) board.setBoardTheme(theme);
             applySettingsTheme(theme);
+            closeDropdownAfterSelection(themesDropdown);
         });
         controlsBodyPanel.add(createDropdownRow("Themes", themesDropdown));
         addGap(8);
@@ -254,6 +261,7 @@ public class SettingsPanel extends JPanel {
         });
         pieceStyleDropdown.addActionListener(e -> {
             if (board != null) board.repaint();
+            closeDropdownAfterSelection(pieceStyleDropdown);
         });
         controlsBodyPanel.add(createDropdownRow("Piece Style", pieceStyleDropdown));
 
@@ -410,6 +418,22 @@ public class SettingsPanel extends JPanel {
             }
         });
         return dropdown;
+    }
+
+    private void closeDropdownAfterSelection(JComboBox<String> dropdown) {
+        SwingUtilities.invokeLater(() -> {
+            if (dropdown != null && dropdown.isPopupVisible()) {
+                dropdown.setPopupVisible(false);
+            }
+        });
+    }
+
+    private void closeOpenDropdowns() {
+        for (JComboBox<String> dropdown : themedDropdowns) {
+            if (dropdown.isPopupVisible()) {
+                dropdown.setPopupVisible(false);
+            }
+        }
     }
 
     private void addSection(String title) {
@@ -1026,11 +1050,14 @@ public class SettingsPanel extends JPanel {
         private int targetHeight;
         private boolean closing;
         private boolean forceHide;
+        private AWTEventListener dismissalListener;
+        private KeyEventDispatcher escapeDispatcher;
 
         RoundedComboPopup(JComboBox combo) {
             super(combo);
             setOpaque(false);
             setBorder(new RoundedPopupBorder());
+            setLightWeightPopupEnabled(true);
         }
 
         @Override
@@ -1059,6 +1086,57 @@ public class SettingsPanel extends JPanel {
         }
 
         @Override
+        protected Rectangle computePopupBounds(int px, int py, int pw, int ph) {
+            return new Rectangle(
+                    0,
+                    Math.max(0, comboBox.getHeight() - 1),
+                    Math.max(comboBox.getWidth(), pw),
+                    ph);
+        }
+
+        @Override
+        protected MouseListener createListMouseListener() {
+            MouseListener delegate = super.createListMouseListener();
+            return new MouseListener() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    delegate.mouseClicked(e);
+                }
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    delegate.mousePressed(e);
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (!SwingUtilities.isLeftMouseButton(e)) {
+                        delegate.mouseReleased(e);
+                        return;
+                    }
+
+                    int index = list.locationToIndex(e.getPoint());
+                    Rectangle cell = index < 0 ? null : list.getCellBounds(index, index);
+                    if (cell == null || !cell.contains(e.getPoint())) return;
+
+                    comboBox.setSelectedIndex(index);
+                    e.consume();
+                    SwingUtilities.invokeLater(() -> comboBox.setPopupVisible(false));
+                }
+
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    delegate.mouseEntered(e);
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    delegate.mouseExited(e);
+                }
+            };
+        }
+
+        @Override
         public void show() {
             if (openTimer != null) openTimer.stop();
             if (closeTimer != null) {
@@ -1066,14 +1144,17 @@ public class SettingsPanel extends JPanel {
                 closeTimer = null;
             }
             closing = false;
-            Dimension naturalSize = getPreferredSize();
             targetWidth = Math.max(comboBox.getWidth(), DROPDOWN_WIDTH);
-            targetHeight = naturalSize.height;
+            int visibleRows = Math.min(comboBox.getItemCount(), comboBox.getMaximumRowCount());
+            targetHeight = Math.max(12, getPopupHeightForRowCount(visibleRows));
             openProgress = 0f;
             setPopupSize(new Dimension(
                     targetWidth,
                     Math.max(12, Math.round(targetHeight * COLLAPSED_HEIGHT_RATIO))));
-            super.show();
+            list.setSelectedIndex(comboBox.getSelectedIndex());
+            list.ensureIndexIsVisible(comboBox.getSelectedIndex());
+            super.show(comboBox, 0, Math.max(0, comboBox.getHeight() - 1));
+            installDismissalListener();
 
             openStartedAtNanos = System.nanoTime();
             openTimer = new Timer(16, e -> {
@@ -1140,12 +1221,68 @@ public class SettingsPanel extends JPanel {
                         RoundedComboPopup.super.hide();
                     } finally {
                         forceHide = false;
+                        uninstallDismissalListener();
                     }
                 }
             });
             closeTimer.setCoalesce(true);
             closeTimer.setInitialDelay(0);
             closeTimer.start();
+        }
+
+        private void installDismissalListener() {
+            uninstallDismissalListener();
+            escapeDispatcher = keyEvent -> {
+                if (isVisible()
+                        && keyEvent.getID() == KeyEvent.KEY_PRESSED
+                        && keyEvent.getKeyCode() == KeyEvent.VK_ESCAPE) {
+                    keyEvent.consume();
+                    SwingUtilities.invokeLater(this::startCloseAnimation);
+                    return true;
+                }
+                return false;
+            };
+            KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                    .addKeyEventDispatcher(escapeDispatcher);
+
+            dismissalListener = event -> {
+                if (!isVisible() || closing) return;
+
+                if (event instanceof MouseWheelEvent) {
+                    MouseWheelEvent wheelEvent = (MouseWheelEvent) event;
+                    wheelEvent.consume();
+                    SwingUtilities.invokeLater(this::startCloseAnimation);
+                    return;
+                }
+
+                if (!(event instanceof MouseEvent)) return;
+                MouseEvent mouseEvent = (MouseEvent) event;
+                if (mouseEvent.getID() != MouseEvent.MOUSE_PRESSED) return;
+                Object source = mouseEvent.getSource();
+                if (!(source instanceof Component)) return;
+                Component clicked = (Component) source;
+                if (SwingUtilities.isDescendingFrom(clicked, this)
+                        || SwingUtilities.isDescendingFrom(clicked, comboBox)) {
+                    return;
+                }
+                SwingUtilities.invokeLater(this::startCloseAnimation);
+            };
+            Toolkit.getDefaultToolkit().addAWTEventListener(
+                    dismissalListener,
+                    AWTEvent.MOUSE_EVENT_MASK
+                            | AWTEvent.MOUSE_WHEEL_EVENT_MASK);
+        }
+
+        private void uninstallDismissalListener() {
+            if (dismissalListener != null) {
+                Toolkit.getDefaultToolkit().removeAWTEventListener(dismissalListener);
+                dismissalListener = null;
+            }
+            if (escapeDispatcher != null) {
+                KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                        .removeKeyEventDispatcher(escapeDispatcher);
+                escapeDispatcher = null;
+            }
         }
 
         @Override
