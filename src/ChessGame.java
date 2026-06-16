@@ -3,6 +3,7 @@ import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 import java.awt.*;
 import java.awt.color.ColorSpace;
+import java.awt.event.HierarchyEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorConvertOp;
@@ -101,6 +102,9 @@ public class ChessGame extends JFrame {
         private boolean whitesTurn = true;
         private boolean timerStarted = false;
         private volatile boolean gameOver = false;
+        private volatile boolean ratingResultRecorded = false;
+        private final AccountApiClient accountApi = new AccountApiClient();
+        private boolean applyingRemoteNetworkEvent = false;
 
 
     // In-game time control UI (replaces the separate time selection window)
@@ -186,7 +190,7 @@ public class ChessGame extends JFrame {
     private static final int FOG_CARD_SHRINK_MS = 320;
     private static final int SPELL_TRAVEL_TOTAL_MS =
             SPELL_TRAVEL_IN_MS + SPELL_TRAVEL_HOLD_MS + SPELL_TRAVEL_OUT_MS;
-    private static final int SPELL_TRAVEL_FRAME_MS = 16;
+    private static final int SPELL_TRAVEL_FRAME_MS = AnimationTiming.FRAME_DELAY_MS;
     private static final int FIREBALL_ANIMATION_LOCK_MS = 6000 + SPELL_TRAVEL_TOTAL_MS;
 
     private static class TimePreset {
@@ -269,6 +273,7 @@ public class ChessGame extends JFrame {
 
         private void endGameAndReturnToMenu(String message) {
         stopTimer();
+        recordTerminalResult("Game Over", message);
 
         if (networkManager != null) {
             networkManager.close();
@@ -500,6 +505,8 @@ public class ChessGame extends JFrame {
     public void showInGameInfoPopup(String title, String message) {
         if (isTerminalResultTitle(title)) {
             setGameOverState();
+            recordTerminalResult(title, message);
+            sendGameResultIfNeeded(title, message);
         }
         if (isThreeCheckPopup(title)) {
             showThreeCheckPopup(message);
@@ -515,6 +522,11 @@ public class ChessGame extends JFrame {
         }
     }
 
+    private void sendGameResultIfNeeded(String title, String message) {
+        if (!onlineMode || networkManager == null || applyingRemoteNetworkEvent) return;
+        networkManager.sendGameResult(title, message);
+    }
+
     private boolean isTerminalResultTitle(String title) {
         String normalized = title == null ? "" : title.trim().toLowerCase();
         return "draw".equals(normalized)
@@ -526,6 +538,72 @@ public class ChessGame extends JFrame {
             || "resign".equals(normalized)
             || "checkmate".equals(normalized)
             || "game over".equals(normalized);
+    }
+
+    public void recordBoardWin(boolean whiteWins) {
+        recordWinner(whiteWins);
+        sendGameResultIfNeeded(
+                "Checkmate",
+                whiteWins ? "White wins!" : "Black wins!");
+    }
+
+    private void recordTerminalResult(String title, String message) {
+        String normalizedTitle = title == null ? "" : title.trim().toLowerCase();
+        String normalizedMessage = message == null ? "" : message.trim().toLowerCase();
+        if ("draw".equals(normalizedTitle) || normalizedMessage.contains("draw")) {
+            recordRatingResult("draw");
+            return;
+        }
+        String winner = extractWinner(message);
+        if ("White".equals(winner)) {
+            recordWinner(true);
+        } else if ("Black".equals(winner)) {
+            recordWinner(false);
+        }
+    }
+
+    private void recordWinner(boolean whiteWins) {
+        boolean localPlayerWhite = onlineMode ? localIsWhite : playerIsWhite;
+        recordRatingResult(whiteWins == localPlayerWhite ? "win" : "loss");
+    }
+
+    private void recordRatingResult(String result) {
+        if (ratingResultRecorded || result == null || result.isBlank()) return;
+        if (spectateMode || (!isBotGame && !onlineMode)) return;
+        AccountApiClient.Session session = AccountSession.get();
+        if (session == null) return;
+        ratingResultRecorded = true;
+
+        SwingWorker<AccountApiClient.RatingUpdate, Void> worker = new SwingWorker<>() {
+            @Override
+            protected AccountApiClient.RatingUpdate doInBackground() throws Exception {
+                return accountApi.recordGameResult(session.token(), result);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    AccountApiClient.RatingUpdate update = get();
+                    AccountSession.updateProfile(update.profile());
+                    System.out.println("ELO updated: "
+                            + update.previousRating()
+                            + " -> "
+                            + update.newRating()
+                            + " ("
+                            + signedDelta(update.ratingDelta())
+                            + "), "
+                            + update.newRank());
+                } catch (Exception exception) {
+                    ratingResultRecorded = false;
+                    System.err.println("Could not update ELO: " + exception.getMessage());
+                }
+            }
+        };
+        worker.execute();
+    }
+
+    private static String signedDelta(int delta) {
+        return delta > 0 ? "+" + delta : String.valueOf(delta);
     }
 
     private boolean showGameConfirm(String title, String message, String yesText, String noText) {
@@ -789,8 +867,11 @@ public class ChessGame extends JFrame {
                     @Override public void onSpellPhaseReceived(String phaseId, boolean casterWhite, int row, int col) {
                         SwingUtilities.invokeLater(() -> onRemoteSpellPhase(phaseId, casterWhite, row, col));
                     }
+                    @Override public void onGameResultReceived(String title, String message) {
+                        SwingUtilities.invokeLater(() -> onRemoteGameResult(title, message));
+                    }
                     @Override public void onError(String msg) {
-                        SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(null, "Network error: " + msg));
+                        SwingUtilities.invokeLater(() -> handleNetworkDisconnect(msg));
                     }
                     @Override public void onDrawOffered() { SwingUtilities.invokeLater(() -> onRemoteOfferDraw()); }
                     @Override public void onDrawAccepted() { SwingUtilities.invokeLater(() -> onRemoteDrawAccepted()); }
@@ -1274,11 +1355,12 @@ public class ChessGame extends JFrame {
                 startTimer();
             }
             if (appHost == null) {
+                setUndecorated(true);
                 pack();
                 applyMinimumContentSize(BASE_GAME_WIDTH, BASE_GAME_HEIGHT);
-                setLocationRelativeTo(null);
+                setExtendedState(JFrame.MAXIMIZED_BOTH);
+                setResizable(false);
                 setVisible(true);
-                FullscreenToggle.enter(this);
             } else {
                 appHost.showEmbeddedScreen(windowPanel, this::cleanupEmbeddedGame);
                 appHost.finishGameLaunchOverlay(windowPanel);
@@ -2065,6 +2147,7 @@ public class ChessGame extends JFrame {
 
         private void clearGameOverState() {
             gameOver = false;
+            ratingResultRecorded = false;
         }
         
         // Timer-related public methods for Board to access
@@ -2130,7 +2213,7 @@ public class ChessGame extends JFrame {
             uciMoves.append(uci);
         }
 
-        if (onlineMode && networkManager != null) {
+        if (onlineMode && networkManager != null && !applyingRemoteNetworkEvent) {
             networkManager.sendMove(fr, fc, tr, tc, promotion == null ? "" : promotion);
         }
     }
@@ -2139,31 +2222,86 @@ public class ChessGame extends JFrame {
         // Called by NetworkManager listener when remote move arrives
         public void onRemoteMove(int fr, int fc, int tr, int tc, String promotion) {
             if (board != null) {
-                board.applyRemoteMove(fr, fc, tr, tc, promotion == null ? "" : promotion);
+                applyingRemoteNetworkEvent = true;
+                try {
+                    board.applyRemoteMove(fr, fc, tr, tc, promotion == null ? "" : promotion);
+                } finally {
+                    applyingRemoteNetworkEvent = false;
+                }
             }
         }
 
         public void onLocalSpellCast(String spellId, boolean casterWhite, SpellTarget target) {
-            if (onlineMode && networkManager != null) {
+            if (onlineMode && networkManager != null && !applyingRemoteNetworkEvent) {
                 networkManager.sendSpellCast(spellId, casterWhite, target);
             }
         }
 
         public void onLocalSpellPhase(String phaseId, boolean casterWhite, int row, int col) {
-            if (onlineMode && networkManager != null) {
+            if (onlineMode && networkManager != null && !applyingRemoteNetworkEvent) {
                 networkManager.sendSpellPhase(phaseId, casterWhite, row, col);
             }
         }
 
         public void onRemoteSpellCast(String spellId, boolean casterWhite, SpellTarget target) {
             if (board != null) {
-                board.applyRemoteSpellCast(spellId, casterWhite, target);
+                applyingRemoteNetworkEvent = true;
+                try {
+                    board.applyRemoteSpellCast(spellId, casterWhite, target);
+                } finally {
+                    applyingRemoteNetworkEvent = false;
+                }
             }
         }
 
         public void onRemoteSpellPhase(String phaseId, boolean casterWhite, int row, int col) {
             if (board != null) {
-                board.applyRemoteSpellPhase(phaseId, casterWhite, row, col);
+                applyingRemoteNetworkEvent = true;
+                try {
+                    board.applyRemoteSpellPhase(phaseId, casterWhite, row, col);
+                } finally {
+                    applyingRemoteNetworkEvent = false;
+                }
+            }
+        }
+
+        public void onRemoteGameResult(String title, String message) {
+            if (gameOver) return;
+            applyingRemoteNetworkEvent = true;
+            try {
+                showInGameInfoPopup(title, message);
+            } finally {
+                applyingRemoteNetworkEvent = false;
+            }
+        }
+
+        private void handleNetworkDisconnect(String message) {
+            if (!onlineMode || gameOver) return;
+            setGameOverState();
+            botMoveInProgress = false;
+            if (board != null) board.setInputEnabled(false);
+            if (networkManager != null) {
+                networkManager.close();
+                networkManager = null;
+            }
+            String detail = (message == null || message.isBlank())
+                    ? "Opponent disconnected."
+                    : message;
+            boolean opponentDisconnected = detail.toLowerCase().contains("opponent disconnected")
+                    || detail.toLowerCase().contains("forfeit")
+                    || detail.toLowerCase().contains("disconnected.");
+            if (opponentDisconnected) {
+                showGamePopup("Your opponent disconnected. You win by forfeit", "Your opponent has disconnected from the game. You win by forfeit.");
+                returnToApplicationMenu();
+                return;
+            }
+            boolean returnToMenu = showGameConfirm(
+                    "Connection Lost",
+                    detail + "\n\nReturn to the multiplayer menu?",
+                    "Return",
+                    "Stay");
+            if (returnToMenu) {
+                returnToApplicationMenu();
             }
         }
 
@@ -2218,6 +2356,7 @@ public class ChessGame extends JFrame {
                 networkManager.sendResign();
             }
             String winner = localIsWhite ? "Black" : "White";
+            recordTerminalResult("Resign", "You resigned. " + winner + " wins.");
             showGamePopup("Resign", "You resigned. " + winner + " wins.");
             // Clean up and close the game window
             if (networkManager != null) networkManager.close();
@@ -2234,6 +2373,7 @@ public class ChessGame extends JFrame {
                 if (confirm) {
                     // For local play, immediately accept â€” stop and close
                     setGameOverState();
+                    recordRatingResult("draw");
                     showGamePopup("Draw", "Draw agreed.");
                     if (networkManager != null) networkManager.close();
                     returnToApplicationMenu();
@@ -2244,6 +2384,7 @@ public class ChessGame extends JFrame {
         // Network callbacks
         public void onRemoteResign() {
             setGameOverState();
+            recordRatingResult("win");
             showGamePopup("Resign", "Opponent resigned. You win!");
             if (networkManager != null) networkManager.close();
             returnToApplicationMenu();
@@ -2254,6 +2395,7 @@ public class ChessGame extends JFrame {
             if (accept) {
                 if (networkManager != null) networkManager.sendDrawResponse(true);
                 setGameOverState();
+                recordRatingResult("draw");
                 showGamePopup("Draw", "Draw agreed.");
                 if (networkManager != null) networkManager.close();
                 returnToApplicationMenu();
@@ -2264,6 +2406,7 @@ public class ChessGame extends JFrame {
 
         public void onRemoteDrawAccepted() {
             setGameOverState();
+            recordRatingResult("draw");
             showGamePopup("Draw", "Opponent accepted the draw.");
             if (networkManager != null) networkManager.close();
             returnToApplicationMenu();
@@ -2701,20 +2844,31 @@ public class ChessGame extends JFrame {
             setMaximumSize(new Dimension(90, 135));
             setHorizontalTextPosition(SwingConstants.CENTER);
             setVerticalTextPosition(SwingConstants.CENTER);
-            liftTimer = new Timer(16, e -> {
+            liftTimer = AnimationTiming.createUiTimer(e -> {
                 float diff = targetLift - visualLift;
                 if (Math.abs(diff) < 0.4f) {
                     visualLift = targetLift;
                     SpellCardButton.this.liftTimer.stop();
                 } else {
-                    visualLift += diff * 0.35f;
+                    double frameAdjustedEase = 1.0 - Math.pow(
+                            1.0 - 0.35,
+                            AnimationTiming.FRAME_SCALE_FROM_16_MS);
+                    visualLift += diff * (float) frameAdjustedEase;
                 }
                 repaint();
             });
-            fxTimer = new Timer(33, e -> {
+            fxTimer = AnimationTiming.createUiTimer(e -> {
                 if (isShowing()) repaint();
             });
-            fxTimer.start();
+            addHierarchyListener(event -> {
+                if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0) return;
+                if (isShowing()) {
+                    fxTimer.start();
+                } else {
+                    fxTimer.stop();
+                    liftTimer.stop();
+                }
+            });
             addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override public void mousePressed(java.awt.event.MouseEvent e) {
                     if (!previewOnly && !selectedVisual) setLift(-4f);
@@ -2867,7 +3021,7 @@ public class ChessGame extends JFrame {
             g2.setClip(new java.awt.geom.RoundRectangle2D.Float(artX, artY, artW, artH, 10, 10));
             if (artImage != null) {
                 BufferedImage imgToDraw = (!isEnabled() && !previewOnly && artGrayImage != null) ? artGrayImage : artImage;
-                g2.drawImage(imgToDraw, artX, artY, artW, artH, null);
+                drawImageCover(g2, imgToDraw, artX, artY, artW, artH);
                 if (!isEnabled() && !previewOnly) {
                     g2.setColor(new Color(30, 30, 30, 70));
                     g2.fillRect(artX, artY, artW, artH);
@@ -2975,6 +3129,30 @@ public class ChessGame extends JFrame {
                 g2.setClip(previousClip);
             }
             g2.dispose();
+        }
+
+        private void drawImageCover(
+                Graphics2D graphics,
+                BufferedImage image,
+                int x,
+                int y,
+                int width,
+                int height) {
+            double scale = Math.max(
+                    width / (double) image.getWidth(),
+                    height / (double) image.getHeight());
+            int drawWidth = Math.max(1, (int) Math.ceil(image.getWidth() * scale));
+            int drawHeight = Math.max(1, (int) Math.ceil(image.getHeight() * scale));
+            int drawX = x + (width - drawWidth) / 2;
+            int drawY = y + (height - drawHeight) / 2;
+            Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            graphics.setRenderingHint(
+                    RenderingHints.KEY_INTERPOLATION,
+                    RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.drawImage(image, drawX, drawY, drawWidth, drawHeight, null);
+            if (previousInterpolation != null) {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation);
+            }
         }
     }
 
@@ -3330,10 +3508,10 @@ public class ChessGame extends JFrame {
     private void animateClockPauseOverlay(float target, int durationMs, Runnable done) {
         if (clockOverlayFadeTimer != null) clockOverlayFadeTimer.stop();
         float startAlpha = clockPauseOverlayAlpha;
-        long startedAt = System.currentTimeMillis();
-        clockOverlayFadeTimer = new Timer(16, null);
+        long startedAtNanos = System.nanoTime();
+        clockOverlayFadeTimer = AnimationTiming.createUiTimer(null);
         clockOverlayFadeTimer.addActionListener(e -> {
-            float t = Math.min(1f, (System.currentTimeMillis() - startedAt) / (float) Math.max(1, durationMs));
+            float t = AnimationTiming.progress(startedAtNanos, durationMs);
             float eased = t * t * (3f - 2f * t);
             clockPauseOverlayAlpha = startAlpha + (target - startAlpha) * eased;
             setClockPauseOverlayAlpha(clockPauseOverlayAlpha);
@@ -3458,7 +3636,7 @@ public class ChessGame extends JFrame {
 
         final long startNanos = System.nanoTime();
         final int durationMs = SPELL_CARD_TRANSITION_MS;
-        Timer t = new Timer(16, null);
+        Timer t = new Timer(AnimationTiming.FRAME_DELAY_MS, null);
         t.addActionListener(e -> {
             float elapsedMs = (System.nanoTime() - startNanos) / 1_000_000f;
             float p = Math.min(1f, elapsedMs / durationMs);
@@ -4251,9 +4429,11 @@ public class ChessGame extends JFrame {
 
     private void startSpellUiAnimation() {
         if (spellAnimTimer != null && spellAnimTimer.isRunning()) return;
-        spellAnimTimer = new Timer(40, e -> {
-            spellAnimPhase += 0.02f;
-            if (spellAnimPhase > 1f) spellAnimPhase -= 1f;
+        final long animationStartedAtNanos = System.nanoTime();
+        final float startingPhase = spellAnimPhase;
+        spellAnimTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
+            double elapsedMs = (System.nanoTime() - animationStartedAtNanos) / 1_000_000.0;
+            spellAnimPhase = (float) ((startingPhase + elapsedMs * (0.02 / 40.0)) % 1.0);
             if (whiteElixirBar != null) whiteElixirBar.repaint();
             if (blackElixirBar != null) blackElixirBar.repaint();
         });
@@ -4319,7 +4499,7 @@ public class ChessGame extends JFrame {
     private JButton createTimeSelectButton() {
         JButton btn = new JButton(selectedPreset.display) {
             private boolean hover;
-            private final Timer breatheTimer = new Timer(33, e -> {
+            private final Timer breatheTimer = AnimationTiming.createUiTimer(e -> {
                 if (isShowing()) repaint();
             });
             {
@@ -4330,7 +4510,14 @@ public class ChessGame extends JFrame {
                 setCursor(new Cursor(Cursor.HAND_CURSOR));
                 setFont(new Font("Arial", Font.BOLD, 28));
                 setForeground(Color.WHITE);
-                breatheTimer.start();
+                addHierarchyListener(event -> {
+                    if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0) return;
+                    if (isShowing()) {
+                        breatheTimer.start();
+                    } else {
+                        breatheTimer.stop();
+                    }
+                });
                 addMouseListener(new java.awt.event.MouseAdapter() {
                     @Override
                     public void mouseEntered(java.awt.event.MouseEvent evt) {
@@ -4838,10 +5025,9 @@ public class ChessGame extends JFrame {
         int durationMs = Math.max(120, Math.round(TIME_DETAILS_ANIMATION_MS * distanceRatio));
         long startedAtNanos = System.nanoTime();
 
-        timeDetailsAnimTimer = new Timer(16, null);
+        timeDetailsAnimTimer = AnimationTiming.createUiTimer(null);
         timeDetailsAnimTimer.addActionListener(e -> {
-            float elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000f;
-            float progress = Math.min(1f, elapsedMs / durationMs);
+            float progress = AnimationTiming.progress(startedAtNanos, durationMs);
             float eased = progress * progress * (3f - 2f * progress);
             int height = Math.round(startHeight + (target - startHeight) * eased);
             applyTimeDetailsHeight(height);
@@ -4852,8 +5038,6 @@ public class ChessGame extends JFrame {
                 applyTimeDetailsHeight(target);
             }
         });
-        timeDetailsAnimTimer.setCoalesce(true);
-        timeDetailsAnimTimer.setInitialDelay(0);
         timeDetailsAnimTimer.start();
     }
 
@@ -5060,6 +5244,14 @@ public class ChessGame extends JFrame {
     private void cleanupEmbeddedGame() {
         stopTimer();
         cancelSpellResolutionLock();
+        if (clockOverlayFadeTimer != null) {
+            clockOverlayFadeTimer.stop();
+            clockOverlayFadeTimer = null;
+        }
+        if (timeDetailsAnimTimer != null) {
+            timeDetailsAnimTimer.stop();
+            timeDetailsAnimTimer = null;
+        }
         if (networkManager != null) {
             networkManager.close();
             networkManager = null;

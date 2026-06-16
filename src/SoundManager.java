@@ -307,10 +307,10 @@ public class SoundManager {
         float target = Math.max(0f, Math.min(1f, targetVolume));
         int duration = Math.max(1, fadeInMs);
         setClipVolume(clip, 0.01f);
-        javax.swing.Timer fadeTimer = new javax.swing.Timer(35, null);
-        long startMs = System.currentTimeMillis();
+        javax.swing.Timer fadeTimer = AnimationTiming.createUiTimer(null);
+        long startedAtNanos = System.nanoTime();
         fadeTimer.addActionListener(e -> {
-            float t = Math.max(0f, Math.min(1f, (System.currentTimeMillis() - startMs) / (float) duration));
+            float t = AnimationTiming.progress(startedAtNanos, duration);
             float eased = (float) (0.5 - 0.5 * Math.cos(Math.PI * t));
             setClipVolume(clip, Math.max(0.01f, target * eased));
             if (t >= 1f) {

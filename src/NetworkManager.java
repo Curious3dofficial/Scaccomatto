@@ -1,5 +1,9 @@
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class NetworkManager {
 
@@ -8,6 +12,7 @@ public class NetworkManager {
         void onMoveReceived(int fromRow, int fromCol, int toRow, int toCol, String promotion);
         void onSpellCastReceived(String spellId, boolean casterWhite, SpellTarget target);
         void onSpellPhaseReceived(String phaseId, boolean casterWhite, int row, int col);
+        void onGameResultReceived(String title, String message);
         void onError(String msg);
         void onDrawOffered();
         void onDrawAccepted();
@@ -21,9 +26,15 @@ public class NetworkManager {
     private PrintWriter out;
     private Listener listener;
     private Thread listenThread;
+    private Timer heartbeatTimer;
+    private volatile long lastPongTimestamp;
+    private volatile boolean closing;
+    private static final int HEARTBEAT_INTERVAL_MS = 5000;
+    private static final int HEARTBEAT_TIMEOUT_MS = 10000;
 
     public void host(int port, Listener listener) {
         this.listener = listener;
+        closing = false;
         new Thread(() -> {
             try {
                 serverSocket = new ServerSocket(port);
@@ -33,6 +44,7 @@ public class NetworkManager {
                 if (listener != null) listener.onConnected(true);
                 startListenLoop();
             } catch (IOException e) {
+                if (closing) return;
                 if (listener != null) listener.onError("Host error: " + e.getMessage());
             }
         }).start();
@@ -40,6 +52,7 @@ public class NetworkManager {
 
     public void join(String host, int port, Listener listener) {
         this.listener = listener;
+        closing = false;
         new Thread(() -> {
             try {
                 socket = new Socket(host, port);
@@ -48,6 +61,7 @@ public class NetworkManager {
                 if (listener != null) listener.onConnected(false);
                 startListenLoop();
             } catch (IOException e) {
+                if (closing) return;
                 if (listener != null) listener.onError("Join error: " + e.getMessage());
             }
         }).start();
@@ -65,14 +79,48 @@ public class NetworkManager {
                 while ((line = in.readLine()) != null) {
                     handleLine(line);
                 }
+                if (!closing && listener != null) {
+                    listener.onError("Opponent disconnected.");
+                }
             } catch (IOException e) {
+                if (closing) return;
                 if (listener != null) listener.onError("Connection lost: " + e.getMessage());
             }
         });
         listenThread.start();
+        startHeartbeat();
+    }
+
+    private void startHeartbeat() {
+        if (heartbeatTimer != null) {
+            heartbeatTimer.cancel();
+        }
+        lastPongTimestamp = System.currentTimeMillis();
+        heartbeatTimer = new Timer("NetworkManager-Heartbeat", true);
+        heartbeatTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (closing || out == null) return;
+                long now = System.currentTimeMillis();
+                if (now - lastPongTimestamp > HEARTBEAT_TIMEOUT_MS) {
+                    if (listener != null) listener.onError("Connection lost: heartbeat timeout.");
+                    close();
+                    return;
+                }
+                sendLine("PING");
+            }
+        }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS);
     }
 
     private void handleLine(String line) {
+        if ("PING".equals(line)) {
+            sendLine("PONG");
+            return;
+        }
+        if ("PONG".equals(line)) {
+            lastPongTimestamp = System.currentTimeMillis();
+            return;
+        }
         if (line.startsWith("MOVE")) {
             // FORMAT: MOVE fr fc tr tc [PROMO Q]
             String[] parts = line.split(" ");
@@ -127,6 +175,16 @@ public class NetworkManager {
             } catch (Exception e) {
                 if (listener != null) listener.onError("Bad SPELL_PHASE message: " + line);
             }
+        } else if (line.startsWith("GAME_RESULT")) {
+            String[] parts = line.split(" ", 3);
+            try {
+                if (parts.length < 3) throw new IllegalArgumentException("Too few fields");
+                String title = decode(parts[1]);
+                String message = decode(parts[2]);
+                if (listener != null) listener.onGameResultReceived(title, message);
+            } catch (Exception e) {
+                if (listener != null) listener.onError("Bad GAME_RESULT message: " + line);
+            }
         } else if (line.startsWith("OFFER_DRAW")) {
             if (listener != null) listener.onDrawOffered();
         } else if (line.startsWith("DRAW_ACCEPT")) {
@@ -145,7 +203,7 @@ public class NetworkManager {
         if (promo != null && !promo.isEmpty()) {
             sb.append(' ').append("PROMO").append(' ').append(promo);
         }
-        out.println(sb.toString());
+        sendLine(sb.toString());
     }
 
     public void sendSpellCast(String spellId, boolean casterWhite, SpellTarget target) {
@@ -159,31 +217,37 @@ public class NetworkManager {
         String pieceType = (target != null && target.resurrectPieceType != null && !target.resurrectPieceType.trim().isEmpty())
                 ? target.resurrectPieceType.trim()
                 : "_";
-        out.println("SPELL_CAST " + (casterWhite ? 1 : 0) + " " + spellId + " "
+        sendLine("SPELL_CAST " + (casterWhite ? 1 : 0) + " " + spellId + " "
                 + sr + " " + sc + " " + tr + " " + tc + " " + dr + " " + dc + " " + pieceType);
     }
 
     public void sendSpellPhase(String phaseId, boolean casterWhite, int row, int col) {
         if (out == null || phaseId == null) return;
-        out.println("SPELL_PHASE " + phaseId + " " + (casterWhite ? 1 : 0) + " " + row + " " + col);
+        sendLine("SPELL_PHASE " + phaseId + " " + (casterWhite ? 1 : 0) + " " + row + " " + col);
+    }
+
+    public void sendGameResult(String title, String message) {
+        sendLine("GAME_RESULT " + encode(title) + " " + encode(message));
     }
 
     public void sendOfferDraw() {
-        if (out == null) return;
-        out.println("OFFER_DRAW");
+        sendLine("OFFER_DRAW");
     }
 
     public void sendDrawResponse(boolean accept) {
-        if (out == null) return;
-        out.println(accept ? "DRAW_ACCEPT" : "DRAW_DECLINE");
+        sendLine(accept ? "DRAW_ACCEPT" : "DRAW_DECLINE");
     }
 
     public void sendResign() {
-        if (out == null) return;
-        out.println("RESIGN");
+        sendLine("RESIGN");
     }
 
     public void close() {
+        closing = true;
+        if (heartbeatTimer != null) {
+            heartbeatTimer.cancel();
+            heartbeatTimer = null;
+        }
         try { if (in != null) in.close(); } catch (IOException ignored) {}
         if (out != null) out.close();
         try { if (socket != null) socket.close(); } catch (IOException ignored) {}
@@ -192,5 +256,22 @@ public class NetworkManager {
 
     public void setListener(Listener l) {
         this.listener = l;
+    }
+
+    private void sendLine(String line) {
+        if (out == null || closing) return;
+        out.println(line);
+        if (out.checkError() && listener != null && !closing) {
+            listener.onError("Connection lost while sending data.");
+        }
+    }
+
+    private static String encode(String value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String decode(String value) {
+        return new String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8);
     }
 }

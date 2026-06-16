@@ -48,10 +48,12 @@ public class AnalysisGame extends JFrame {
     public AnalysisGame(MainMenu appHost) {
         this.appHost = appHost;
         setTitle("Java Chess - Analysis Board");
-        setSize(1400, 800);
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        setResizable(true);
-        setLocationRelativeTo(null);
+        if (appHost == null) {
+            setUndecorated(true);
+            setExtendedState(JFrame.MAXIMIZED_BOTH);
+            setResizable(false);
+        }
 
         // â”€â”€ start Stockfish â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try {

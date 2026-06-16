@@ -1,5 +1,6 @@
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelListener;
@@ -28,12 +29,11 @@ public class puzzles extends JFrame {
         this.appHost = appHost;
         setTitle("Scaccomatto - Puzzles");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
-        Rectangle screen = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
-        int initialW = Math.min(screen.width, Math.max(1100, (int) Math.round(screen.width * 0.88)));
-        int initialH = Math.min(screen.height, Math.max(700, (int) Math.round(screen.height * 0.88)));
-        setSize(initialW, initialH);
-        setMinimumSize(new Dimension(960, 600));
-        setLocationRelativeTo(null);
+        if (appHost == null) {
+            setUndecorated(true);
+            setExtendedState(JFrame.MAXIMIZED_BOTH);
+            setResizable(false);
+        }
 
         FantasyRoot root = new FantasyRoot();
         root.setLayout(new BorderLayout());
@@ -172,7 +172,7 @@ public class puzzles extends JFrame {
             targetY[0] = Math.max(0d, Math.min(maxY, targetY[0] + delta));
 
             if (smoothScrollTimer[0] == null) {
-                smoothScrollTimer[0] = new Timer(12, tick -> {
+                smoothScrollTimer[0] = AnimationTiming.createUiTimer(tick -> {
                     Point current = viewport.getViewPosition();
                     int liveMaxY = Math.max(0, target.getHeight() - viewport.getHeight());
                     targetY[0] = Math.max(0d, Math.min(liveMaxY, targetY[0]));
@@ -187,7 +187,10 @@ public class puzzles extends JFrame {
                         return;
                     }
 
-                    int nextY = (int) Math.round(current.y + dist * 0.28d);
+                    double frameAdjustedEase = 1d - Math.pow(
+                            1d - 0.28d,
+                            AnimationTiming.FRAME_DELAY_MS / 12d);
+                    int nextY = (int) Math.round(current.y + dist * frameAdjustedEase);
                     nextY = Math.max(0, Math.min(liveMaxY, nextY));
                     if (nextY != current.y) {
                         viewport.setViewPosition(new Point(0, nextY));
@@ -405,6 +408,8 @@ public class puzzles extends JFrame {
         private JViewport boundViewport;
         private int selected = 1;
         private float t = 0f;
+        private final Timer animationTimer;
+        private long animationStartedAtNanos;
 
         MapCanvas(int totalLevels, int unlockedLevel, int completedLevel) {
             setOpaque(false);
@@ -454,11 +459,21 @@ public class puzzles extends JFrame {
                 }
             });
 
-            Timer timer = new Timer(30, e -> {
-                t += 0.04f;
+            animationTimer = AnimationTiming.createUiTimer(e -> {
+                double elapsedMs = (System.nanoTime() - animationStartedAtNanos) / 1_000_000.0;
+                t = (float) (elapsedMs * (0.04 / 30.0));
                 repaint();
             });
-            timer.start();
+            addHierarchyListener(event -> {
+                if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) == 0) return;
+                if (isShowing()) {
+                    animationStartedAtNanos = System.nanoTime()
+                            - (long) (t / (0.04 / 30.0) * 1_000_000.0);
+                    animationTimer.start();
+                } else {
+                    animationTimer.stop();
+                }
+            });
         }
 
         void bindToViewport(JViewport viewport) {

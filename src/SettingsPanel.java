@@ -13,6 +13,8 @@ import java.awt.event.MouseWheelEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.prefs.Preferences;
 
 public class SettingsPanel extends JPanel {
     private static final int CARD_WIDTH = 420;
@@ -27,7 +29,22 @@ public class SettingsPanel extends JPanel {
     private static final int DROPDOWN_HEIGHT = 41;
     private static final int TOGGLE_WIDTH = 76;
     private static final int TOGGLE_HEIGHT = 32;
-    private static ThemePalette currentPalette = ThemePalette.forName("Blue");
+    private static final String PREF_SOUND_ENABLED = "sound_enabled";
+    private static final String PREF_BOARD_THEME = "board_theme";
+    private static final String PREF_SHOW_LEGAL_MOVES = "show_legal_moves";
+    private static final String PREF_SHOW_COORDINATES = "show_coordinates";
+    private static final String PREF_AUTO_FLIP = "auto_flip";
+    private static final String PREF_AUTO_QUEEN = "auto_queen";
+    private static final String PREF_PREMOVES = "premoves";
+    private static final String PREF_ANIMATION_SPEED = "animation_speed";
+    private static final String PREF_EVAL_BAR = "eval_bar";
+    private static final String PREF_BEST_MOVE_INDICATOR = "best_move_indicator";
+    private static final String PREF_OPENING_NAMES = "opening_names";
+    private static final String PREF_LOW_TIME_ALERTS = "low_time_alerts";
+    private static final ThemePalette DEFAULT_PALETTE = ThemePalette.forName("Blue");
+    private static ThemePalette currentPalette = DEFAULT_PALETTE;
+    private final Preferences preferences = Preferences.userNodeForPackage(SettingsPanel.class);
+    private final AccountApiClient accountApi = new AccountApiClient();
 
     private Board board;
     private final List<JButton> themedButtons = new ArrayList<>();
@@ -180,7 +197,8 @@ public class SettingsPanel extends JPanel {
         controlsBodyPanel.setOpaque(false);
         controlsBodyPanel.setLayout(new BoxLayout(controlsBodyPanel, BoxLayout.Y_AXIS));
         buildControlsBody();
-        applySettingsTheme("Blue");
+        loadPreferences();
+        applySettingsTheme((String) themesDropdown.getSelectedItem());
 
         settingsBodyExpandedHeight = Math.min(BODY_VIEW_HEIGHT, controlsBodyPanel.getPreferredSize().height);
         settingsBodyCurrentHeight = settingsExpanded ? settingsBodyExpandedHeight : 0;
@@ -235,12 +253,18 @@ public class SettingsPanel extends JPanel {
         addGap(10);
 
         autoFlipToggle = createToggle(false);
-        autoFlipToggle.addActionListener(e -> board.setAutoFlipEnabled(autoFlipToggle.isSelected()));
+        autoFlipToggle.addActionListener(e -> {
+            board.setAutoFlipEnabled(autoFlipToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Auto Flip Board", autoFlipToggle));
         addGap(8);
 
         showCoordinatesToggle = createToggle(true);
-        showCoordinatesToggle.addActionListener(e -> board.setShowCoordinates(showCoordinatesToggle.isSelected()));
+        showCoordinatesToggle.addActionListener(e -> {
+            board.setShowCoordinates(showCoordinatesToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Coordinates", showCoordinatesToggle));
         addGap(8);
 
@@ -251,6 +275,7 @@ public class SettingsPanel extends JPanel {
             String theme = (String) themesDropdown.getSelectedItem();
             if (board != null) board.setBoardTheme(theme);
             applySettingsTheme(theme);
+            savePreferences();
             closeDropdownAfterSelection(themesDropdown);
         });
         controlsBodyPanel.add(createDropdownRow("Themes", themesDropdown));
@@ -268,48 +293,67 @@ public class SettingsPanel extends JPanel {
         addSection("Gameplay");
 
         showLegalMovesToggle = createToggle(true);
-        showLegalMovesToggle.addActionListener(e -> board.setShowLegalMoves(showLegalMovesToggle.isSelected()));
+        showLegalMovesToggle.addActionListener(e -> {
+            board.setShowLegalMoves(showLegalMovesToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Legal Moves", showLegalMovesToggle));
         addGap(8);
 
         premovingToggle = createToggle(false);
-        premovingToggle.addActionListener(e -> board.setPremovingEnabled(premovingToggle.isSelected()));
+        premovingToggle.addActionListener(e -> {
+            board.setPremovingEnabled(premovingToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Premoves", premovingToggle));
         addGap(8);
 
         autoQueenToggle = createToggle(false);
-        autoQueenToggle.addActionListener(e -> board.setAutoQueenEnabled(autoQueenToggle.isSelected()));
+        autoQueenToggle.addActionListener(e -> {
+            board.setAutoQueenEnabled(autoQueenToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Auto Queen", autoQueenToggle));
 
         addSection("Audio and Visuals");
 
         soundsToggle = createToggle(SoundManager.isSoundEnabled());
-        soundsToggle.addActionListener(e -> SoundManager.setSoundEnabled(soundsToggle.isSelected()));
+        soundsToggle.addActionListener(e -> {
+            SoundManager.setSoundEnabled(soundsToggle.isSelected());
+            savePreferences();
+        });
         controlsBodyPanel.add(createToggleRow("Sounds", soundsToggle));
         addGap(8);
 
         animationsDropdown = createDropdown(new String[] {"Slow", "Normal", "Fast"});
         animationsDropdown.setSelectedItem("Normal");
-        animationsDropdown.addActionListener(e -> board.setAnimationSpeed((String) animationsDropdown.getSelectedItem()));
+        animationsDropdown.addActionListener(e -> {
+            board.setAnimationSpeed((String) animationsDropdown.getSelectedItem());
+            savePreferences();
+        });
         controlsBodyPanel.add(createDropdownRow("Animations", animationsDropdown));
         addGap(8);
 
         lowTimeAlertsToggle = createToggle(true);
+        lowTimeAlertsToggle.addActionListener(e -> savePreferences());
         controlsBodyPanel.add(createToggleRow("Low Time Alerts", lowTimeAlertsToggle));
 
         addSection("Analysis");
 
         evalBarToggle = createToggle(true);
+        evalBarToggle.addActionListener(e -> savePreferences());
         controlsBodyPanel.add(createToggleRow("Eval Bar", evalBarToggle));
         addGap(8);
 
         bestMoveToggle = createToggle(false);
+        bestMoveToggle.addActionListener(e -> savePreferences());
         controlsBodyPanel.add(createToggleRow("Indicate Best Move", bestMoveToggle));
         addGap(8);
 
         openingNamesToggle = createToggle(true);
         openingNamesToggle.addActionListener(e -> {
             if (board != null) board.setOpeningNamesEnabled(openingNamesToggle.isSelected());
+            savePreferences();
         });
         controlsBodyPanel.add(createToggleRow("Opening Names", openingNamesToggle));
         addGap(16);
@@ -611,6 +655,198 @@ public class SettingsPanel extends JPanel {
         return toggle;
     }
 
+    private void savePreferences() {
+        if (AccountSession.isSignedIn()) {
+            saveAccountPreferencesAsync();
+        } else {
+            saveLocalPreferences();
+        }
+    }
+
+    private void saveLocalPreferences() {
+        preferences.putBoolean(PREF_SOUND_ENABLED, soundsToggle.isSelected());
+        preferences.put(PREF_BOARD_THEME, (String) themesDropdown.getSelectedItem());
+        preferences.putBoolean(PREF_SHOW_LEGAL_MOVES, showLegalMovesToggle.isSelected());
+        preferences.putBoolean(PREF_SHOW_COORDINATES, showCoordinatesToggle.isSelected());
+        preferences.putBoolean(PREF_AUTO_FLIP, autoFlipToggle.isSelected());
+        preferences.putBoolean(PREF_AUTO_QUEEN, autoQueenToggle.isSelected());
+        preferences.putBoolean(PREF_PREMOVES, premovingToggle.isSelected());
+        preferences.put(PREF_ANIMATION_SPEED, (String) animationsDropdown.getSelectedItem());
+        preferences.putBoolean(PREF_EVAL_BAR, evalBarToggle.isSelected());
+        preferences.putBoolean(PREF_BEST_MOVE_INDICATOR, bestMoveToggle.isSelected());
+        preferences.putBoolean(PREF_OPENING_NAMES, openingNamesToggle.isSelected());
+        preferences.putBoolean(PREF_LOW_TIME_ALERTS, lowTimeAlertsToggle.isSelected());
+    }
+
+    private void saveAccountPreferencesAsync() {
+        AccountApiClient.Session session = AccountSession.get();
+        if (session == null) {
+            saveLocalPreferences();
+            return;
+        }
+
+        Map<String, Object> settings = new java.util.LinkedHashMap<>();
+        settings.put(PREF_SOUND_ENABLED, soundsToggle.isSelected());
+        settings.put(PREF_BOARD_THEME, themesDropdown.getSelectedItem());
+        settings.put(PREF_SHOW_LEGAL_MOVES, showLegalMovesToggle.isSelected());
+        settings.put(PREF_SHOW_COORDINATES, showCoordinatesToggle.isSelected());
+        settings.put(PREF_AUTO_FLIP, autoFlipToggle.isSelected());
+        settings.put(PREF_AUTO_QUEEN, autoQueenToggle.isSelected());
+        settings.put(PREF_PREMOVES, premovingToggle.isSelected());
+        settings.put(PREF_ANIMATION_SPEED, animationsDropdown.getSelectedItem());
+        settings.put(PREF_EVAL_BAR, evalBarToggle.isSelected());
+        settings.put(PREF_BEST_MOVE_INDICATOR, bestMoveToggle.isSelected());
+        settings.put(PREF_OPENING_NAMES, openingNamesToggle.isSelected());
+        settings.put(PREF_LOW_TIME_ALERTS, lowTimeAlertsToggle.isSelected());
+
+        new SwingWorker<>() {
+            @Override
+            protected Map<String, String> doInBackground() throws Exception {
+                return accountApi.updateSettings(session.token(), settings);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    get();
+                } catch (Exception ignored) {
+                    saveLocalPreferences();
+                }
+            }
+        }.execute();
+    }
+
+    private void loadPreferences() {
+        loadLocalPreferences();
+        if (AccountSession.isSignedIn()) {
+            loadAccountPreferencesAsync();
+        }
+    }
+
+    private void loadLocalPreferences() {
+        soundsToggle.setSelected(preferences.getBoolean(PREF_SOUND_ENABLED, soundsToggle.isSelected()));
+        SoundManager.setSoundEnabled(soundsToggle.isSelected());
+
+        String savedTheme = preferences.get(PREF_BOARD_THEME, null);
+        if (savedTheme != null) {
+            setSelectedItemIfExists(themesDropdown, savedTheme);
+        }
+
+        showLegalMovesToggle.setSelected(preferences.getBoolean(PREF_SHOW_LEGAL_MOVES, showLegalMovesToggle.isSelected()));
+        if (board != null) board.setShowLegalMoves(showLegalMovesToggle.isSelected());
+
+        showCoordinatesToggle.setSelected(preferences.getBoolean(PREF_SHOW_COORDINATES, showCoordinatesToggle.isSelected()));
+        if (board != null) board.setShowCoordinates(showCoordinatesToggle.isSelected());
+
+        autoFlipToggle.setSelected(preferences.getBoolean(PREF_AUTO_FLIP, autoFlipToggle.isSelected()));
+        if (board != null) board.setAutoFlipEnabled(autoFlipToggle.isSelected());
+
+        autoQueenToggle.setSelected(preferences.getBoolean(PREF_AUTO_QUEEN, autoQueenToggle.isSelected()));
+        if (board != null) board.setAutoQueenEnabled(autoQueenToggle.isSelected());
+
+        premovingToggle.setSelected(preferences.getBoolean(PREF_PREMOVES, premovingToggle.isSelected()));
+        if (board != null) board.setPremovingEnabled(premovingToggle.isSelected());
+
+        animationsDropdown.setSelectedItem(preferences.get(PREF_ANIMATION_SPEED, (String) animationsDropdown.getSelectedItem()));
+        if (board != null) board.setAnimationSpeed((String) animationsDropdown.getSelectedItem());
+
+        lowTimeAlertsToggle.setSelected(preferences.getBoolean(PREF_LOW_TIME_ALERTS, lowTimeAlertsToggle.isSelected()));
+        evalBarToggle.setSelected(preferences.getBoolean(PREF_EVAL_BAR, evalBarToggle.isSelected()));
+        bestMoveToggle.setSelected(preferences.getBoolean(PREF_BEST_MOVE_INDICATOR, bestMoveToggle.isSelected()));
+
+        openingNamesToggle.setSelected(preferences.getBoolean(PREF_OPENING_NAMES, openingNamesToggle.isSelected()));
+        if (board != null) board.setOpeningNamesEnabled(openingNamesToggle.isSelected());
+    }
+
+    private void loadAccountPreferencesAsync() {
+        AccountApiClient.Session session = AccountSession.get();
+        if (session == null) return;
+
+        new SwingWorker<Map<String, String>, Void>() {
+            @Override
+            protected Map<String, String> doInBackground() throws Exception {
+                return accountApi.getSettings(session.token());
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    Map<String, String> settings = get();
+                    applyLoadedSettings(settings);
+                } catch (Exception ignored) {
+                    // Keep local settings if account settings are unavailable.
+                }
+            }
+        }.execute();
+    }
+
+    public void reloadPreferences() {
+        if (AccountSession.isSignedIn()) {
+            loadAccountPreferencesAsync();
+        } else {
+            loadLocalPreferences();
+        }
+    }
+
+    private void applyLoadedSettings(Map<String, String> settings) {
+        if (settings == null) return;
+
+        soundsToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_SOUND_ENABLED, String.valueOf(soundsToggle.isSelected()))));
+        SoundManager.setSoundEnabled(soundsToggle.isSelected());
+
+        String theme = settings.get(PREF_BOARD_THEME);
+        if (theme != null) {
+            setSelectedItemIfExists(themesDropdown, theme);
+        }
+
+        showLegalMovesToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_SHOW_LEGAL_MOVES, String.valueOf(showLegalMovesToggle.isSelected()))));
+        if (board != null) board.setShowLegalMoves(showLegalMovesToggle.isSelected());
+
+        showCoordinatesToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_SHOW_COORDINATES, String.valueOf(showCoordinatesToggle.isSelected()))));
+        if (board != null) board.setShowCoordinates(showCoordinatesToggle.isSelected());
+
+        autoFlipToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_AUTO_FLIP, String.valueOf(autoFlipToggle.isSelected()))));
+        if (board != null) board.setAutoFlipEnabled(autoFlipToggle.isSelected());
+
+        autoQueenToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_AUTO_QUEEN, String.valueOf(autoQueenToggle.isSelected()))));
+        if (board != null) board.setAutoQueenEnabled(autoQueenToggle.isSelected());
+
+        premovingToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_PREMOVES, String.valueOf(premovingToggle.isSelected()))));
+        if (board != null) board.setPremovingEnabled(premovingToggle.isSelected());
+
+        String animationSpeed = settings.get(PREF_ANIMATION_SPEED);
+        if (animationSpeed != null) {
+            animationsDropdown.setSelectedItem(animationSpeed);
+        }
+        if (board != null) board.setAnimationSpeed((String) animationsDropdown.getSelectedItem());
+
+        lowTimeAlertsToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_LOW_TIME_ALERTS, String.valueOf(lowTimeAlertsToggle.isSelected()))));
+        evalBarToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_EVAL_BAR, String.valueOf(evalBarToggle.isSelected()))));
+        bestMoveToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_BEST_MOVE_INDICATOR, String.valueOf(bestMoveToggle.isSelected()))));
+
+        openingNamesToggle.setSelected(Boolean.parseBoolean(
+                settings.getOrDefault(PREF_OPENING_NAMES, String.valueOf(openingNamesToggle.isSelected()))));
+        if (board != null) board.setOpeningNamesEnabled(openingNamesToggle.isSelected());
+    }
+
+    private static void setSelectedItemIfExists(JComboBox<String> dropdown, String item) {
+        for (int i = 0; i < dropdown.getItemCount(); i++) {
+            if (item.equals(dropdown.getItemAt(i))) {
+                dropdown.setSelectedItem(item);
+                return;
+            }
+        }
+    }
+
     private void applySettingsTheme(String themeName) {
         currentPalette = ThemePalette.forName(themeName);
         for (JButton button : themedButtons) {
@@ -650,10 +886,10 @@ public class SettingsPanel extends JPanel {
             settingsAnimTimer.stop();
         }
 
-        final long start = System.currentTimeMillis();
+        final long start = System.nanoTime();
         final int durationMs = 200;
-        settingsAnimTimer = new Timer(16, e -> {
-            float t = (System.currentTimeMillis() - start) / (float) durationMs;
+        settingsAnimTimer = AnimationTiming.createUiTimer(e -> {
+            float t = AnimationTiming.progress(start, durationMs);
             if (t >= 1f) t = 1f;
             float eased = 1f - (float) Math.pow(1f - t, 3);
             int h = from + Math.round((to - from) * eased);
@@ -842,8 +1078,8 @@ public class SettingsPanel extends JPanel {
             knobProgress = progress;
             target = progress;
 
-            animTimer = new Timer(16, e -> {
-                float t = (System.nanoTime() - animStartNanos) / (ANIM_MS * 1_000_000f);
+            animTimer = AnimationTiming.createUiTimer(e -> {
+                float t = AnimationTiming.progress(animStartNanos, ANIM_MS);
                 if (t >= 1f) t = 1f;
                 float trackEase = 1f - (float) Math.pow(1f - t, 3);
                 float knobEase = easeOutBack(t);
@@ -1053,6 +1289,7 @@ public class SettingsPanel extends JPanel {
         private AWTEventListener dismissalListener;
         private KeyEventDispatcher escapeDispatcher;
 
+        @SuppressWarnings({"rawtypes", "unchecked"})
         RoundedComboPopup(JComboBox combo) {
             super(combo);
             setOpaque(false);
@@ -1075,8 +1312,8 @@ public class SettingsPanel extends JPanel {
         }
 
         @Override
-        protected JList createList() {
-            JList list = super.createList();
+        protected JList<Object> createList() {
+            JList<Object> list = (JList<Object>) super.createList();
             list.setOpaque(false);
             list.setBackground(currentPalette.popup);
             list.setSelectionBackground(currentPalette.popupSelection);
@@ -1157,9 +1394,8 @@ public class SettingsPanel extends JPanel {
             installDismissalListener();
 
             openStartedAtNanos = System.nanoTime();
-            openTimer = new Timer(16, e -> {
-                float elapsedMs = (System.nanoTime() - openStartedAtNanos) / 1_000_000f;
-                float t = Math.max(0f, Math.min(1f, elapsedMs / OPEN_ANIMATION_MS));
+            openTimer = AnimationTiming.createUiTimer(e -> {
+                float t = AnimationTiming.progress(openStartedAtNanos, OPEN_ANIMATION_MS);
                 openProgress = 1f - (1f - t) * (1f - t) * (1f - t);
                 int height = Math.round(targetHeight * (
                         COLLAPSED_HEIGHT_RATIO + (1f - COLLAPSED_HEIGHT_RATIO) * openProgress));
@@ -1173,8 +1409,6 @@ public class SettingsPanel extends JPanel {
                     setPopupSize(new Dimension(targetWidth, targetHeight));
                 }
             });
-            openTimer.setCoalesce(true);
-            openTimer.setInitialDelay(0);
             openTimer.start();
         }
 
@@ -1201,9 +1435,8 @@ public class SettingsPanel extends JPanel {
             closing = true;
             float startProgress = openProgress;
             long closeStartedAtNanos = System.nanoTime();
-            closeTimer = new Timer(16, e -> {
-                float elapsedMs = (System.nanoTime() - closeStartedAtNanos) / 1_000_000f;
-                float t = Math.max(0f, Math.min(1f, elapsedMs / CLOSE_ANIMATION_MS));
+            closeTimer = AnimationTiming.createUiTimer(e -> {
+                float t = AnimationTiming.progress(closeStartedAtNanos, CLOSE_ANIMATION_MS);
                 float eased = t * t * (3f - 2f * t);
                 openProgress = startProgress * (1f - eased);
                 int height = Math.round(targetHeight * (

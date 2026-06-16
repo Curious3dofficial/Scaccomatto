@@ -300,14 +300,16 @@ public class AnalysisPanel extends JPanel {
         private final List<BufferedImage> frames = new ArrayList<>();
         private int frameIndex = 0;
         private Timer timer;
+        private long animationStartedAtNanos;
 
         PreviewAnimationPanel() {
             setOpaque(true);
             setBackground(new Color(44, 30, 74));
             loadFrames();
             if (!frames.isEmpty()) {
-                timer = new Timer(15, e -> {
-                    frameIndex = (frameIndex + 1) % frames.size();
+                timer = AnimationTiming.createUiTimer(e -> {
+                    long elapsedMs = (System.nanoTime() - animationStartedAtNanos) / 1_000_000L;
+                    frameIndex = (int) ((elapsedMs / 15L) % frames.size());
                     repaint();
                 });
             }
@@ -323,6 +325,7 @@ public class AnalysisPanel extends JPanel {
 
         private void restartAnimation() {
             frameIndex = 0;
+            animationStartedAtNanos = System.nanoTime();
             if (timer != null && !timer.isRunning()) {
                 timer.start();
             }

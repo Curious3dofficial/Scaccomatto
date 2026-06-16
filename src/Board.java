@@ -250,10 +250,10 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     private static final Color CHECK_SQUARE_COLOR = new Color(224, 58, 64);
     private static final long CHECK_EVAL_THROTTLE_MS = 120L;
     private Rectangle lastExplosionDirtyBounds = null;
-    private static final int FX_TIMER_DELAY_MS = 16;
-    private static final int GLOBAL_FX_REPAINT_DELAY_MS = 33;
-    private static final int THREE_CHECK_RING_TIMER_DELAY_MS = 33;
-    private static final long EXPLOSION_FRAME_MS = 17L;
+    private static final int FX_TIMER_DELAY_MS = AnimationTiming.FRAME_DELAY_MS;
+    private static final int GLOBAL_FX_REPAINT_DELAY_MS = AnimationTiming.FRAME_DELAY_MS;
+    private static final int THREE_CHECK_RING_TIMER_DELAY_MS = AnimationTiming.FRAME_DELAY_MS;
+    private static final long EXPLOSION_FRAME_MS = AnimationTiming.FRAME_DELAY_MS;
     private static final int MAX_EXPLOSION_OVERLAY_FRAMES = 45;
     private static final int MAX_EXPLOSION_FRAME_EDGE = 480;
     private static final long EXPLOSION_FADE_TAIL_MS = 500L;
@@ -1053,7 +1053,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
 
     private void ensureSquareColorTransitionTimer() {
         if (squareColorTransitionTimer == null) {
-            squareColorTransitionTimer = new Timer(16, e -> {
+            squareColorTransitionTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
                 repaint();
                 if (!hasActiveSquareColorTransition()) {
                     ((Timer) e.getSource()).stop();
@@ -1744,10 +1744,10 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
     private void startFogAnimation() {
         ensureFogTexture();
         if (fogAnimationTimer == null) {
-            fogAnimationTimer = new Timer(16, e -> {
+            fogAnimationTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
                 long nowNanos = System.nanoTime();
                 double elapsedSeconds = fogLastFrameNanos == 0L
-                        ? 0.016
+                        ? AnimationTiming.FRAME_DELAY_MS / 1000.0
                         : Math.min(0.05, (nowNanos - fogLastFrameNanos) / 1_000_000_000.0);
                 fogLastFrameNanos = nowNanos;
                 fogPhaseX += 20.0 * elapsedSeconds;
@@ -2433,7 +2433,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                     }
                 }
                 if (fireballOverlayPanel != null) {
-                    JLayeredPane layered = gameController != null ? gameController.getLayeredPane() : null;
+                    JLayeredPane layered = fireballOverlayLayer;
                     if (layered != null) {
                         fireballOverlayPanel.setBounds(0, 0, layered.getWidth(), layered.getHeight());
                     }
@@ -2448,11 +2448,12 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                         && urielResurrectionFx.isEmpty() && pieceExplosionFx.isEmpty()) {
                     atomicExplosionTimer.stop();
                     lastExplosionDirtyBounds = null;
-                    if (fireballOverlayPanel != null && gameController != null) {
-                        gameController.getLayeredPane().remove(fireballOverlayPanel);
+                    if (fireballOverlayPanel != null && fireballOverlayLayer != null) {
+                        fireballOverlayLayer.remove(fireballOverlayPanel);
                         fireballOverlayPanel = null;
-                        gameController.getLayeredPane().revalidate();
-                        gameController.getLayeredPane().repaint();
+                        fireballOverlayLayer.revalidate();
+                        fireballOverlayLayer.repaint();
+                        fireballOverlayLayer = null;
                     }
                 }
             });
@@ -4705,7 +4706,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         endermanTeleportSoundPlayed = false;
         endermanPickupFxStartedAtMs = System.currentTimeMillis();
         if (endermanPickupFxTimer != null) endermanPickupFxTimer.stop();
-        endermanPickupFxTimer = new Timer(16, e -> {
+        endermanPickupFxTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
             long elapsed = System.currentTimeMillis() - endermanPickupFxStartedAtMs;
             repaint();
             long moveAtMs = ENDERMAN_PICKUP_FX_MS + ENDERMAN_POP_OUT_MS;
@@ -6126,7 +6127,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
                 spellId, spellName, row, col, System.currentTimeMillis(), loadSpellCastCardArt(spellId));
 
         if (spellCastCardTimer != null) spellCastCardTimer.stop();
-        spellCastCardTimer = new Timer(16, e -> {
+        spellCastCardTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
             SpellCastCardFx fx = spellCastCardFx;
             if (fx == null || System.currentTimeMillis() - fx.startMs >= SPELL_CAST_CARD_TOTAL_MS) {
                 ((Timer) e.getSource()).stop();
@@ -6314,7 +6315,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         possibleMoves.clear();
         setCursor(Cursor.getDefaultCursor());
 
-        urielChooserTimer = new Timer(16, e -> {
+        urielChooserTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
             if (!urielChooserActive) {
                 ((Timer) e.getSource()).stop();
                 return;
@@ -6749,7 +6750,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
             duckAnimToCol = col;
             duckAnimStartMs = System.currentTimeMillis();
 
-            Timer timer = new Timer(16, null);
+            Timer timer = new Timer(AnimationTiming.FRAME_DELAY_MS, null);
             timer.addActionListener(ev -> {
                 if (!isDuckPlacementAnimating()) {
                     ((Timer) ev.getSource()).stop();
@@ -7879,7 +7880,7 @@ private ArrayList<Arrow> arrows = new ArrayList<>();
         drawThreeCheckAmbientRings(g2d);
         drawPieceExplosionLighting(g2d);
         drawAtomicExplosionFx(g2d);
-        if (fireballOverlayPanel == null) {
+        if (fireballOverlayPanel == null || !fireballOverlayPanel.isShowing()) {
             drawFireballImpactFx(g2d);
         }
         drawFreezeVisualFx(g2d, fogRulesActive, fogViewerIsWhite, visibilityMap);
@@ -8198,13 +8199,13 @@ g2.dispose();
         kingRotating = true;
         kingRotationAngle = 0.0;
         
-        final int steps = 25; // Smooth rotation over 25 steps
-        Timer rotateTimer = new Timer(20, null); // 20ms per step = 500ms total
-        final int[] step = {0};
+        final long durationMs = 500L;
+        final long startedAtNanos = System.nanoTime();
+        Timer rotateTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, null);
         
         rotateTimer.addActionListener(e -> {
-            step[0]++;
-            double progress = (double) step[0] / steps;
+            double elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000.0;
+            double progress = Math.min(1.0, elapsedMs / durationMs);
             
             // Use ease-out for natural falling motion
             double t = 1 - Math.pow(1 - progress, 3);
@@ -8212,7 +8213,7 @@ g2.dispose();
             
             repaint();
             
-            if (step[0] >= steps) {
+            if (progress >= 1.0) {
                 rotateTimer.stop();
                 kingRotating = false;
                 // Keep the king at 90 degrees permanently
@@ -8241,9 +8242,12 @@ g2.dispose();
     }
 
     private void vibrateIllegalMove() {
-        Timer vibrateTimer = new Timer(30, null);
+        final long startedAtNanos = System.nanoTime();
+        final long durationMs = 300L;
+        Timer vibrateTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, null);
         vibrateTimer.addActionListener(e -> {
-            vibrateCount++;
+            long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000L;
+            vibrateCount = Math.min(10, (int) (elapsedMs / 30L) + 1);
             
             if (vibrateCount % 2 == 0) {
                 vibrateOffsetX = 5;
@@ -8253,7 +8257,7 @@ g2.dispose();
             
             repaint();
             
-            if (vibrateCount >= 10) {
+            if (elapsedMs >= durationMs) {
                 vibrateTimer.stop();
                 vibrateRow = -1;
                 vibrateCol = -1;
@@ -8303,6 +8307,7 @@ g2.dispose();
         // Keep history navigation quick; let user settings control live move speed.
         final int steps = forceAnimate ? 7 : moveAnimationSteps;
         final int delay = forceAnimate ? 7 : moveAnimationDelayMs;
+        final long durationNanos = Math.max(1L, (long) steps * delay) * 1_000_000L;
         
         final int displaySr = boardFlipped ? (7 - sr) : sr;
         final int displaySc = boardFlipped ? (7 - sc) : sc;
@@ -8327,12 +8332,13 @@ g2.dispose();
         final int finalRookSx = rookSx;
         final int finalRookEx = rookEx;
 
-        Timer timer = new Timer(delay, null);  // Use the delay variable
-        final int[] step = {0};
+        Timer timer = new Timer(AnimationTiming.FRAME_DELAY_MS, null);
+        final long startedAtNanos = System.nanoTime();
 
         timer.addActionListener(e -> {
-            step[0]++;
-            double linearT = (double) step[0] / steps;
+            double linearT = Math.min(
+                    1.0,
+                    (System.nanoTime() - startedAtNanos) / (double) durationNanos);
             
             // Apply easing function for smooth acceleration/deceleration
             double t = easeInOutCubic(linearT);
@@ -8350,7 +8356,7 @@ g2.dispose();
             
             repaint();
 
-            if (step[0] >= steps) {
+            if (linearT >= 1.0) {
                 timer.stop();
                 animProgress = 0.0; // Reset progress
                 animFromRow = animFromCol = animToRow = animToCol = -1; // Reset animation squares
@@ -8919,7 +8925,7 @@ g2.dispose();
         bomberCaptureFx = fx;
         animating = true;
 
-        bomberCaptureTimer = new Timer(16, e -> {
+        bomberCaptureTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, e -> {
             long elapsed = System.currentTimeMillis() - fx.startMs;
             if (elapsed < BOMBER_CHARGE_MS) {
                 repaint();
@@ -9501,6 +9507,9 @@ g2.dispose();
                 
                 // Show the custom image popup after a short delay (let the king rotate first)
                 boolean whiteWins = !whiteTurn;
+                if (gameController != null) {
+                    gameController.recordBoardWin(whiteWins);
+                }
 
                 // Play case-based sound and keep handle to stop it
                 SoundManager.SoundHandle checkmateSound = SoundManager.playSound(whiteWins
@@ -10628,11 +10637,16 @@ private int squareCenterY(int row, int col) {
         });
         rebursterTimer.start();
         // Physics loop
-        confettiTimer = new Timer(16, ev -> {
+        confettiTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, ev -> {
             int bh = getHeight();
+            double dt = AnimationTiming.FRAME_SCALE_FROM_16_MS;
             synchronized (particles) {
                 for (Particle p : particles) {
-                    p.x += p.vx; p.y += p.vy; p.vy += p.gravity; p.vx *= 0.99; p.angle += p.spin;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += p.gravity * dt;
+                    p.vx *= Math.pow(0.99, dt);
+                    p.angle += p.spin * dt;
                 }
                 particles.removeIf(pp -> pp.y > bh + 60);
             }
@@ -10661,12 +10675,33 @@ private int squareCenterY(int row, int col) {
     private javax.swing.JPanel poopOverlayPanel = null;
     // Fireball overlay panel on layered pane so impact flash can render above top bars.
     private javax.swing.JPanel fireballOverlayPanel = null;
+    private JLayeredPane fireballOverlayLayer = null;
+
+    private JLayeredPane getVisibleFireballOverlayLayer() {
+        JRootPane visibleRoot = SwingUtilities.getRootPane(this);
+        if (visibleRoot != null && visibleRoot.isShowing()) {
+            return visibleRoot.getLayeredPane();
+        }
+        if (gameController != null && gameController.isShowing()) {
+            return gameController.getLayeredPane();
+        }
+        return null;
+    }
 
     private void ensureFireballOverlayPanel() {
-        if (gameController == null || fireballOverlayPanel != null) return;
-        JLayeredPane layered = gameController.getLayeredPane();
-            fireballOverlayPanel = new javax.swing.JPanel(null) {
+        if (fireballOverlayPanel != null && fireballOverlayPanel.isShowing()) return;
+        if (fireballOverlayPanel != null && fireballOverlayLayer != null) {
+            fireballOverlayLayer.remove(fireballOverlayPanel);
+            fireballOverlayPanel = null;
+            fireballOverlayLayer = null;
+        }
+
+        JLayeredPane layered = getVisibleFireballOverlayLayer();
+        if (layered == null) return;
+        fireballOverlayLayer = layered;
+        fireballOverlayPanel = new javax.swing.JPanel(null) {
             @Override public boolean isOpaque() { return false; }
+            @Override public boolean contains(int x, int y) { return false; }
             @Override protected void paintComponent(Graphics g) {
                 if (fireballImpactFx.isEmpty()) return;
                 Graphics2D gc = (Graphics2D) g.create();
@@ -10730,12 +10765,16 @@ private int squareCenterY(int row, int col) {
         poopSpawnTimer = new Timer(380, ev -> spawnPoopWave(getWidth()));
         poopSpawnTimer.start();
         // Physics loop â€” repaint the overlay panel each frame
-        confettiTimer = new Timer(16, ev -> {
+        confettiTimer = new Timer(AnimationTiming.FRAME_DELAY_MS, ev -> {
             int bh = getHeight();
+            double dt = AnimationTiming.FRAME_SCALE_FROM_16_MS;
             synchronized (particles) {
                 for (Particle p : particles) {
                     if (!p.isPoop) continue;
-                    p.x += p.vx; p.y += p.vy; p.vy += p.gravity * 0.5; p.angle += p.spin;
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += p.gravity * 0.5 * dt;
+                    p.angle += p.spin * dt;
                 }
                 particles.removeIf(pp -> pp.isPoop && pp.y > bh + 60);
             }

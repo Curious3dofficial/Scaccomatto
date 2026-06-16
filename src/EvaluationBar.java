@@ -19,13 +19,16 @@ public class EvaluationBar extends JPanel {
         setPreferredSize(new Dimension(30, 560));
         setBackground(new Color(64, 64, 64));
 
-        animTimer = new Timer(16, e -> {
+        animTimer = AnimationTiming.createUiTimer(e -> {
             double diff = targetPct - currentPct;
             if (Math.abs(diff) < 0.002) {
                 currentPct = targetPct;
                 animTimer.stop();
             } else {
-                currentPct += diff * 0.14;
+                double frameAdjustedEase = 1.0 - Math.pow(
+                        1.0 - 0.14,
+                        AnimationTiming.FRAME_SCALE_FROM_16_MS);
+                currentPct += diff * frameAdjustedEase;
             }
             repaint();
         });
