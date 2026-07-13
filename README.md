@@ -128,4 +128,4 @@ New migrations include:
 - User settings column
 - Remember tokens table
 
-All migrations execute automatically on startup in filename order.
+All migrations execute automatically on startup in filename order.yeah
